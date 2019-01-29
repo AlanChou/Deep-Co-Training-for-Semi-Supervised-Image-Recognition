@@ -49,7 +49,7 @@ class co_train_classifier(nn.Module):
         self.r9 = nn.LeakyReLU(negative_slope=0.1, inplace=True)
 
         self.fc = nn.Linear(128, 10)
-        self.sf = nn.Softmax()
+        self.sf = nn.Softmax(dim = 1)
 
     def forward(self, x):
         x = self.c1(x)
@@ -87,7 +87,8 @@ class co_train_classifier(nn.Module):
         x = self.b9(x)
         x = self.r9(x)
         # print(x.size())
-        x = torch.mean(x, dim=[2, 3]) # # Global average pooling
+        # x = torch.mean(x, dim=[2, 3]) # # Global average pooling
+        x = torch.mean(torch.mean(x, dim=3), dim=2)
         x_logit = self.fc(x)
         x_softmax = self.sf(x_logit)
         return x_softmax, x_logit
@@ -111,34 +112,49 @@ def fgsm_attack(image, epsilon, data_grad):
     return perturbed_image
 
 def jsd(p,q):
-    softmax = nn.Softmax(dim = 1)
+    # softmax = nn.Softmax(dim = 1)
     kld = nn.KLDivLoss()
-    p = softmax(p)
-    q = softmax(q)
-    return 0.5*kld(p, 0.5*(p + q)) + 0.5*kld(q, 0.5*(p + q))
+    S = nn.Softmax(dim = 1)
+    LS = nn.LogSoftmax(dim = 1)
+    a = S(p)
+    b = S(q)
+    c = LS(0.5*(p + q))
 
-def loss_sup():
+    return 0.5*kld(c,a) + 0.5*kld(c, b)
+
+def loss_sup(logit1, logit2, labels_S1, labels_S2):
     # CE, by default, is averaged over each loss element in the batch
     ce = nn.CrossEntropyLoss() 
-    loss1 = ce(outputs1, labels1)
-    loss2 = ce(outputs2, labels2) 
+    loss1 = ce(logit1, labels_S1)
+    loss2 = ce(logit2, labels_S2) 
     return loss1+loss2
 
-def loss_cot():
+def loss_cot(U_p1, U_p2):
 # the Jensen-Shannon divergence between p1(x) and p2(x)
-    return jsd()
+    return jsd(U_p1, U_p2)
 
-def loss_diff():
-    ce = nn.CrossEntropyLoss() 
-    loss1 = ce(output1, )
-    loss2 = ce(outputs2,) 
-    return loss1+loss2
+def loss_diff(logit1, logit2, perturbed_logit1, perturbed_logit2, U_logit1, U_logit2, perturbed_logit_U1, perturbed_logit_U2):
+    S = nn.Softmax(dim = 1)
+    LS = nn.LogSoftmax(dim = 1)
+    
+    a = S(logit2) * LS(perturbed_logit1)
+    a = torch.sum(a)
+
+    b = S(logit1) * LS(perturbed_logit2)
+    b = torch.sum(b)
+
+    c = S(U_logit2) * LS(perturbed_logit_U1)
+    c = torch.sum(c)
+
+    d = S(U_logit1) * LS(perturbed_logit_U2)
+    d = torch.sum(d)
+
+    return -(a+b+c+d)/100.0
+
 
 
 batch_size = 100
-# label data propotion 4600/50000 for cifar 10 
-p_l = 0.09
-p_u = 1 - 0.09
+# label data propotion 4000/50000 for cifar 10 
 
 #standard data augmentation of cifar10
 transform = transforms.Compose([
@@ -157,10 +173,8 @@ transform_test = transforms.Compose([
 
 
 
-testset = torchvision.datasets.CIFAR10(root='./data', train=False,
-                                       download=True, transform=transform_test)
-testloader = torch.utils.data.DataLoader(testset, batch_size=batch_size,
-                                         shuffle=True, num_workers=2)
+testset = torchvision.datasets.CIFAR10(root='./data', train=False, download=True, transform=transform_test)
+testloader = torch.utils.data.DataLoader(testset, batch_size=batch_size, shuffle=True, num_workers=2)
 
 classes = ('plane', 'car', 'bird', 'cat', 'deer', 'dog', 'frog', 'horse', 'ship', 'truck')
 
@@ -186,15 +200,15 @@ U_sampler = torch.utils.data.SubsetRandomSampler(U_idx)
 
 
 S_loader1 = torch.utils.data.DataLoader(
-        trainset, batch_size=9, sampler=S_sampler,
+        trainset, batch_size=8, sampler=S_sampler,
         num_workers=2, pin_memory=True)
 
 S_loader2 = torch.utils.data.DataLoader(
-        trainset, batch_size=9, sampler=S_sampler,
+        trainset, batch_size=8, sampler=S_sampler,
         num_workers=2, pin_memory=True)
 
 U_loader = torch.utils.data.DataLoader(
-        trainset, batch_size=91, sampler=U_sampler,
+        trainset, batch_size=92, sampler=U_sampler,
         num_workers=2, pin_memory=True)
 
 
@@ -208,9 +222,10 @@ net2.cuda()
 params = list(net1.parameters()) + list(net2.parameters())
 # stochastic gradient descent with momentum 0.9 and weight decay0.0001 in paper page 7
 optimizer = optim.SGD(params, lr=0.1, momentum=0.9, weight_decay=0.0001)
-
+ce = nn.CrossEntropyLoss() 
 net1.train()
 net2.train()
+epsilons = [0, .05, .1, .15, .2, .25, .3]
 for epoch in range(600):  # loop over the dataset multiple times
     
     lamda_sup = 1 
@@ -236,13 +251,10 @@ for epoch in range(600):  # loop over the dataset multiple times
     S_iter2 = iter(S_loader1)
     U_iter = iter(U_loader)
     adjust_learning_rate(optimizer, epoch)
-    if(epoch % 100 ==0):
+    if(epoch % 1 ==0):
         torch.save(net1.state_dict(), 'co_train_classifier_1.pkl')
         torch.save(net2.state_dict(), 'co_train_classifier_2.pkl')
     while(i < step):
-
-
-
         inputs_S1, labels_S1 = S_iter1.next()
         inputs_S2, labels_S2 = S_iter2.next()
         inputs_U, _ = U_iter.next()
@@ -252,60 +264,83 @@ for epoch in range(600):  # loop over the dataset multiple times
         inputs_S2 = inputs_S2.cuda()
         labels_S2 = labels_S2.cuda()
         inputs_U = inputs_U.cuda()    
+
         # generate adversarial example 1
         inputs_S1.requires_grad = True         # Set requires_grad attribute of tensor. Important for Attack
-        outputs1 = net1(inputs_S1)
-        init_pred = outputs1.max(1, keepdim=True)[1]
-        loss1 = F.nll_loss(outputs1, labels_S1)
+        _,  S_logit1 = net1(inputs_S1)
+
+        loss1 = ce(S_logit1, labels_S1)
         net1.zero_grad()
-        loss1.backward()
+        loss1.backward(retain_graph=True)
         inputs_S_grad1 = inputs_S1.grad.data
-        perturbed_data1 = fgsm_attack(inputs_S1, epsilon, inputs_S_grad1)
+        perturbed_data1 = fgsm_attack(inputs_S1, 0.1, inputs_S_grad1)
 
         # generate adversarial example 2
         inputs_S2.requires_grad = True         # Set requires_grad attribute of tensor. Important for Attack
-        outputs2 = net1(inputs_S2)
-        init_pred = outputs2.max(1, keepdim=True)[1]
-        loss2 = F.nll_loss(outputs2, labels_S2)
+        _,  S_logit2 = net2(inputs_S2)
+        loss2 = ce(S_logit2, labels_S2)
         net2.zero_grad()
-        loss2.backward()
+        loss2.backward(retain_graph=True)
         inputs_S_grad2 = inputs_S2.grad.data
-        perturbed_data2 = fgsm_attack(inputs_S2, epsilon, inputs_S_grad2)
+        perturbed_data2 = fgsm_attack(inputs_S2, 0.1, inputs_S_grad2)
 
-        _, perturbed_logit1 = net1(perturbed_data1)
-        _, perturbed_logit2 = net2(perturbed_data2)
 
+
+        _, perturbed_logit1 = net1(perturbed_data2)
+        _, perturbed_logit2 = net2(perturbed_data1)
+
+
+        # generate adversarial example U1
+        inputs_U.requires_grad = True         # Set requires_grad attribute of tensor. Important for Attack
         U_p1, U_logit1 = net1(inputs_U)
+        predictions_U1 = torch.max(U_logit1, 1)
+        loss3 = ce(U_logit1, predictions_U1[1])
+        net1.zero_grad()
+        loss3.backward(retain_graph=True)
+        inputs_U_grad1 = inputs_U.grad.data
+        perturbed_data_U1 = fgsm_attack(inputs_U, 0.1, inputs_U_grad1)
+
+        # generate adversarial example U2
+        inputs_U.requires_grad = True         # Set requires_grad attribute of tensor. Important for Attack
         U_p2, U_logit2 = net2(inputs_U)
+        predictions_U2 = torch.max(U_logit2, 1)
+        loss4 = ce(U_logit2, predictions_U2[1])
+        net2.zero_grad()
+        loss4.backward(retain_graph=True)
+        inputs_U_grad2 = inputs_U.grad.data
+        perturbed_data_U2 = fgsm_attack(inputs_U, 0.1, inputs_U_grad2)
+
+
+        _, perturbed_logit_U1 = net1(perturbed_data_U2)
+        _, perturbed_logit_U2 = net2(perturbed_data_U1)
 
         # zero the parameter gradients
         optimizer.zero_grad()
+        net1.zero_grad()
+        net2.zero_grad()
 
-        # forward + backward + optimize
-        _, logit1 = net1(inputs1)
-        _, logit2 = net2(inputs2)
         
-        loss_sup = loss_sup(logit1, logit2, labels_S1, labels_S2)
-        loss_cot = loss_cot(U_p1, U_p2)
-        loss_diff = loss_diff(logit1, logit2, perturbed_logit1, perturbed_logit2)
+        Loss_sup = loss1+loss2
+        Loss_cot = loss_cot(U_p1, U_p2)
+        Loss_diff = loss_diff(S_logit1, S_logit2, perturbed_logit1, perturbed_logit2, U_logit1, U_logit2, perturbed_logit_U1, perturbed_logit_U2)
         
-        total_loss = lamda_sup*loss_sup + lamda_cot*loss_cot + lamda_diff*loss_diff
+        total_loss = lamda_sup*Loss_sup + lamda_cot*Loss_cot + lamda_diff*Loss_diff
         total_loss.backward()
         optimizer.step()
-        predictions1 = torch.max(outputs1, 1)
-        predictions2 = torch.max(outputs2, 1)
+        predictions1 = torch.max(S_logit1, 1)
+        predictions2 = torch.max(S_logit2, 1)
         
-        train_correct1 += np.sum(predictions1[1].cpu().numpy() == labels1.cpu().numpy())
-        total1 += labels1.size(0)
+        train_correct1 += np.sum(predictions1[1].cpu().numpy() == labels_S1.cpu().numpy())
+        total1 += labels_S1.size(0)
 
-        train_correct2 += np.sum(predictions2[1].cpu().numpy() == labels2.cpu().numpy())
-        total2 += labels2.size(0)
+        train_correct2 += np.sum(predictions2[1].cpu().numpy() == labels_S2.cpu().numpy())
+        total2 += labels_S2.size(0)
         # print statistics
         running_loss += total_loss.item()
-        ls += loss_sup.item()
-        lc += loss_cot.item()
-        ld += loss_diff.item()
-        if i % 40 == 39:    # print every 200 mini-batches
+        ls += Loss_sup.item()
+        lc += Loss_cot.item()
+        ld += Loss_diff.item()
+        if i % 40 == 39:    # print every 40 mini-batches
             print('[%d, %5d] total loss: %.3f, loss_sup:%.3f, loss_cot:%.3f, loss_diff:%.3f, training acc 1: %.3f, training acc 2: %.3f' %
                   (epoch + 1, i + 1, running_loss / 40, ls, lc, ld, 100. * train_correct1 / total1, 100. * train_correct2 / total2))
             running_loss = 0.0

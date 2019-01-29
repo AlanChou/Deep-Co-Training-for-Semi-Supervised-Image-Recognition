@@ -134,7 +134,7 @@ def fgsm_attack(image, epsilon, data_grad):
 
 def jsd(p,q):
     # kld = nn.KLDivLoss(size_average=False)
-	kld = nn.KLDivLoss()
+    kld = nn.KLDivLoss()
     S = nn.Softmax(dim = 1)
     LS = nn.LogSoftmax(dim = 1)
     a = S(p)

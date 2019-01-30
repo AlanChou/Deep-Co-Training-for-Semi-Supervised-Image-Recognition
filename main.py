@@ -12,7 +12,7 @@ import math
 from torch.autograd import Variable
 from utils import progress_bar
 
-# hyper paramerter
+# hyper paramerters
 # some are created as global variables and will be assigned with the right value later
 batch_size = 100
 lamda_cot_max = 10
@@ -120,21 +120,12 @@ def adjust_lamda(epoch):
         lamda_cot = lamda_cot_max
         lamda_diff = lamda_diff_max    
 
-# This function is copied from the official website of Pytorch. 
-# Note that we clip to -1, 1 instead of 0, 1
-def fgsm_attack(image, epsilon, data_grad):
-    # Collect the element-wise sign of the data gradient
-    sign_data_grad = data_grad.sign()
-    # Create the perturbed image by adjusting each pixel of the input image
-    perturbed_image = image + epsilon*sign_data_grad
-    # Adding clipping to maintain [-1,1] range
-    perturbed_image = torch.clamp(perturbed_image, -1, 1)
-    # Return the perturbed image
-    return perturbed_image
+
 
 def jsd(p,q):
-    # kld = nn.KLDivLoss(size_average=False)
-    kld = nn.KLDivLoss()
+    kld = nn.KLDivLoss(reduction = 'elementwise_mean')
+
+    # kld = nn.KLDivLoss()
     S = nn.Softmax(dim = 1)
     LS = nn.LogSoftmax(dim = 1)
     a = S(p)
@@ -172,21 +163,47 @@ def loss_diff(logit1, logit2, perturbed_logit1, perturbed_logit2, U_logit1, U_lo
 
     return -(a+b+c+d)/batch_size 
 
-def get_adv_example(net, inputs, labels):
-    # generate adversarial example 
-    net.eval()
-    inputs.requires_grad = True
-    ce = nn.CrossEntropyLoss() 
-    _,  logits = net(inputs)
-    loss = ce(logits, labels)
-    net.zero_grad()
-    loss.backward(retain_graph=True)
-    inputs_grad = inputs.grad.data
-    perturbed_data = fgsm_attack(inputs, 0.1, inputs_grad)
-    net.train()
-    return perturbed_data
+
+# This function is copied from the official website of Pytorch. 
+# Note that we clip to -1, 1 instead of 0, 1
+# def fgsm_attack(image, epsilon, data_grad):
+#     # Collect the element-wise sign of the data gradient
+#     sign_data_grad = data_grad.sign()
+#     # Create the perturbed image by adjusting each pixel of the input image
+#     perturbed_image = image + epsilon*sign_data_grad
+#     # Adding clipping to maintain [-1,1] range
+#     perturbed_image = torch.clamp(perturbed_image, -1, 1)
+#     # Return the perturbed image
+#     return perturbed_image
+
+# def get_adv_example(net, inputs, labels):
+#     # generate adversarial example 
+#     net.eval()
+#     inputs.requires_grad = True
+#     ce = nn.CrossEntropyLoss() 
+#     _,  logits = net(inputs)
+#     loss = ce(logits, labels)
+#     net.zero_grad()
+#     loss.backward(retain_graph=True)
+#     inputs_grad = inputs.grad.data
+#     perturbed_data = fgsm_attack(inputs, 0.1, inputs_grad)
+#     net.train()
+#     return perturbed_data
 
 
+def get_adv_example(net, inputs, labels, optimizer):
+    
+    inputs.requires_grad_()
+    optimizer.zero_grad()
+    ce = nn.CrossEntropyLoss()
+    _, outputs=net(inputs)
+    loss = ce(outputs,labels)
+    loss.backward()
+    epsilon=0.1
+    x_grad=torch.sign(inputs.grad)
+    x_adversarial=torch.clamp(inputs.detach()+epsilon*x_grad,0,1)    
+    
+    return x_adversarial
 
 # labelled data propotion 4000/50000 for cifar 10 
 # unlabelled data propotion 46000/50000 for cifar 10 
@@ -283,10 +300,12 @@ def train(epoch):
     lc = 0.0 
     ld = 0.0
     i = 0
+
+    # create iterator for b1, b2, bu
     S_iter1 = iter(S_loader1)
     S_iter2 = iter(S_loader1)
     U_iter = iter(U_loader)
-    
+    print('epoch:',epoch)
     while(i < step):
         inputs_S1, labels_S1 = S_iter1.next()
         inputs_S2, labels_S2 = S_iter2.next()
@@ -306,8 +325,8 @@ def train(epoch):
         
 
         # generate adversarial example 1
-        perturbed_data1 = get_adv_example(net1, inputs_S1, labels_S1)
-        perturbed_data2 = get_adv_example(net2, inputs_S2, labels_S2)
+        perturbed_data1 = get_adv_example(net1, inputs_S1, labels_S1, optimizer)
+        perturbed_data2 = get_adv_example(net2, inputs_S2, labels_S2, optimizer)
 
         _, perturbed_logit1 = net1(perturbed_data2)
         _, perturbed_logit2 = net2(perturbed_data1)
@@ -319,8 +338,9 @@ def train(epoch):
         predictions_U2 = torch.max(U_logit2, 1)
         
         
-        perturbed_data_U1 = get_adv_example(net1, inputs_U, predictions_U1[1])
-        perturbed_data_U2 = get_adv_example(net2, inputs_U, predictions_U2[1])
+        perturbed_data_U1 = get_adv_example(net1, inputs_U, predictions_U1[1], optimizer)
+        perturbed_data_U2 = get_adv_example(net2, inputs_U, predictions_U2[1], optimizer)
+
 
         _, perturbed_logit_U1 = net1(perturbed_data_U2)
         _, perturbed_logit_U2 = net2(perturbed_data_U1)
@@ -340,8 +360,6 @@ def train(epoch):
         optimizer.step()
 
 
-
-
         train_correct_S1 += np.sum(predictions_S1[1].cpu().numpy() == labels_S1.cpu().numpy())
         total_S1 += labels_S1.size(0)
 
@@ -353,27 +371,17 @@ def train(epoch):
 
         train_correct_U2 += np.sum(predictions_U2[1].cpu().numpy() == labels_U.cpu().numpy())
         total_U2 += labels_U.size(0)
-        # print statistics
+        
         running_loss += total_loss.item()
         ls += Loss_sup.item()
         lc += Loss_cot.item()
         ld += Loss_diff.item()
-
-        if i % 40 == 39:    # print every 40 mini-batches
-            print('[%d, %5d] total loss: %.3f, loss_sup:%.3f, loss_cot:%.3f, loss_diff:%.3f, training acc 1: %.3f, training acc 2: %.3f' %
-                  (epoch + 1, i + 1, running_loss / 40, ls /40, lc/40, ld/40, 100. * (train_correct_S1+train_correct_U1) / (total_S1+total_U1), 100. * (train_correct_S2+train_correct_U2) / (total_S2+total_U2)))
-            running_loss = 0.0
-            ls = 0.0
-            lc = 0.0 
-            ld = 0.0
-            total_S1 = 0
-            total_S2 = 0
-            total_U1 = 0
-            total_U2 = 0
-            train_correct_S1 = 0
-            train_correct_S2 = 0
-            train_correct_U1 = 0
-            train_correct_U2 = 0
+        # print statistics
+        # progress_bar(i, 50000, 
+        if i%50 == 0:
+            print('net1 acc: %.3f%% | net2 acc: %.3f%% | total loss: %.3f | loss_sup: %.3f | loss_cot: %.3f | loss_diff: %.3f'
+                % (100. * (train_correct_S1+train_correct_U1) / (total_S1+total_U1), 100. * (train_correct_S2+train_correct_U2) / (total_S2+total_U2), running_loss/(i+1), ls/(i+1), lc/(i+1), ld/(i+1)))
+            
 
         i = i + 1
 
@@ -401,7 +409,7 @@ def test(epoch):
             total2 += targets.size(0)
             correct2 += predicted2[1].eq(targets).sum().item()
 
-            progress_bar(batch_idx, len(testloader), 'net1 Acc: %.3f%% (%d/%d) | net2 Acc: %.3f%% (%d/%d)'
+            progress_bar(batch_idx, len(testloader), '\nnet1 acc: %.3f%% (%d/%d) | net2 acc: %.3f%% (%d/%d)'
                 % (100.*correct1/total1, correct1, total1, 100.*correct2/total2, correct2, total2))
 
     # Save checkpoint.

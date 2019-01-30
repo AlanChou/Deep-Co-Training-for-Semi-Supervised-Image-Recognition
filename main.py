@@ -291,19 +291,19 @@ def train(epoch):
     while(i < step):
         inputs_S1, labels_S1 = S_iter1.next()
         inputs_S2, labels_S2 = S_iter2.next()
-        # inputs_U, labels_U = U_iter.next() # note that label U will not be used for training. 
+        inputs_U, labels_U = U_iter.next() # note that label U will not be used for training. 
 
         inputs_S1 = inputs_S1.cuda()
         labels_S1 = labels_S1.cuda()
         inputs_S2 = inputs_S2.cuda()
         labels_S2 = labels_S2.cuda()
-        # inputs_U = inputs_U.cuda()    
+        inputs_U = inputs_U.cuda()    
 
 
         _, S_logit1 = net1(inputs_S1)
         _, S_logit2 = net2(inputs_S2)
-        # _, U_logit1 = net1(inputs_U)
-        # _, U_logit2 = net2(inputs_U)
+        _, U_logit1 = net1(inputs_U)
+        _, U_logit2 = net2(inputs_U)
 
         tensor_data.append(inputs_S1)
         tensor_label.append(labels_S1)   

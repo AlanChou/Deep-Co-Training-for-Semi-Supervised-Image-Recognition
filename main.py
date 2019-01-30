@@ -261,7 +261,8 @@ params = list(net1.parameters()) + list(net2.parameters())
 optimizer = optim.SGD(params, lr=0.1, momentum=0.9, weight_decay=0.0001)
 ce = nn.CrossEntropyLoss() 
 
-
+tensor_data = []
+tensor_label = []
 
 def train(epoch):
     net1.train()
@@ -287,56 +288,58 @@ def train(epoch):
     S_iter2 = iter(S_loader1)
     U_iter = iter(U_loader)
     
-    while(i < 5):
+    while(i < step):
         inputs_S1, labels_S1 = S_iter1.next()
-        inputs_S2, labels_S2 = S_iter2.next()
-        inputs_U, labels_U = U_iter.next() # note that label U will not be used for training. 
+        # inputs_S2, labels_S2 = S_iter2.next()
+        # inputs_U, labels_U = U_iter.next() # note that label U will not be used for training. 
 
         inputs_S1 = inputs_S1.cuda()
         labels_S1 = labels_S1.cuda()
-        inputs_S2 = inputs_S2.cuda()
-        labels_S2 = labels_S2.cuda()
-        inputs_U = inputs_U.cuda()    
+        # inputs_S2 = inputs_S2.cuda()
+        # labels_S2 = labels_S2.cuda()
+        # inputs_U = inputs_U.cuda()    
 
 
         _, S_logit1 = net1(inputs_S1)
-        _, S_logit2 = net2(inputs_S2)
-        _, U_logit1 = net1(inputs_U)
-        _, U_logit2 = net2(inputs_U)
-        
+        # _, S_logit2 = net2(inputs_S2)
+        # _, U_logit1 = net1(inputs_U)
+        # _, U_logit2 = net2(inputs_U)
+
+        tensor_data.append(inputs_S1)
+        tensor_label.append(labels_S1)   
 
         # generate adversarial example 1
-        perturbed_data1 = get_adv_example(net1, inputs_S1, labels_S1)
-        perturbed_data2 = get_adv_example(net2, inputs_S2, labels_S2)
+        # perturbed_data1 = get_adv_example(net1, inputs_S1, labels_S1)
+        # perturbed_data2 = get_adv_example(net2, inputs_S2, labels_S2)
 
-        _, perturbed_logit1 = net1(perturbed_data2)
-        _, perturbed_logit2 = net2(perturbed_data1)
+        # _, perturbed_logit1 = net1(perturbed_data2)
+        # _, perturbed_logit2 = net2(perturbed_data1)
 
 
         predictions_S1 = torch.max(S_logit1, 1)
-        predictions_S2 = torch.max(S_logit2, 1)
-        predictions_U1 = torch.max(U_logit1, 1)
-        predictions_U2 = torch.max(U_logit2, 1)
+        # predictions_S2 = torch.max(S_logit2, 1)
+        # predictions_U1 = torch.max(U_logit1, 1)
+        # predictions_U2 = torch.max(U_logit2, 1)
         
         
-        perturbed_data_U1 = get_adv_example(net1, inputs_U, predictions_U1[1])
-        perturbed_data_U2 = get_adv_example(net2, inputs_U, predictions_U2[1])
+        # perturbed_data_U1 = get_adv_example(net1, inputs_U, predictions_U1[1])
+        # perturbed_data_U2 = get_adv_example(net2, inputs_U, predictions_U2[1])
 
-        _, perturbed_logit_U1 = net1(perturbed_data_U2)
-        _, perturbed_logit_U2 = net2(perturbed_data_U1)
+        # _, perturbed_logit_U1 = net1(perturbed_data_U2)
+        # _, perturbed_logit_U2 = net2(perturbed_data_U1)
 
-        # zero the parameter gradients
-        optimizer.zero_grad()
-        net1.zero_grad()
-        net2.zero_grad()
+        # # zero the parameter gradients
+        # optimizer.zero_grad()
+        # net1.zero_grad()
+        # net2.zero_grad()
 
         
-        Loss_sup = loss_sup(S_logit1, S_logit2, labels_S1, labels_S2)
-        Loss_cot = loss_cot(U_logit1, U_logit2)
-        Loss_diff = loss_diff(S_logit1, S_logit2, perturbed_logit1, perturbed_logit2, U_logit1, U_logit2, perturbed_logit_U1, perturbed_logit_U2)
+        # Loss_sup = loss_sup(S_logit1, S_logit2, labels_S1, labels_S2)
+        # Loss_cot = loss_cot(U_logit1, U_logit2)
+        # Loss_diff = loss_diff(S_logit1, S_logit2, perturbed_logit1, perturbed_logit2, U_logit1, U_logit2, perturbed_logit_U1, perturbed_logit_U2)
         
-        total_loss = Loss_sup + lamda_cot*Loss_cot + lamda_diff*Loss_diff
-        total_loss.backward()
+        # total_loss = Loss_sup + lamda_cot*Loss_cot + lamda_diff*Loss_diff
+        # total_loss.backward()
         # optimizer.step()
 
 
@@ -345,39 +348,54 @@ def train(epoch):
         train_correct_S1 += np.sum(predictions_S1[1].cpu().numpy() == labels_S1.cpu().numpy())
         total_S1 += labels_S1.size(0)
 
-        train_correct_U1 += np.sum(predictions_U1[1].cpu().numpy() == labels_U.cpu().numpy())
-        total_U1 += labels_U.size(0)
+        # train_correct_U1 += np.sum(predictions_U1[1].cpu().numpy() == labels_U.cpu().numpy())
+        # total_U1 += labels_U.size(0)
 
-        train_correct_S2 += np.sum(predictions_S2[1].cpu().numpy() == labels_S2.cpu().numpy())
-        total_S2 += labels_S2.size(0)
+        # train_correct_S2 += np.sum(predictions_S2[1].cpu().numpy() == labels_S2.cpu().numpy())
+        # total_S2 += labels_S2.size(0)
 
-        train_correct_U2 += np.sum(predictions_U2[1].cpu().numpy() == labels_U.cpu().numpy())
-        total_U2 += labels_U.size(0)
+        # train_correct_U2 += np.sum(predictions_U2[1].cpu().numpy() == labels_U.cpu().numpy())
+        # total_U2 += labels_U.size(0)
         # print statistics
-        running_loss += total_loss.item()
-        ls += Loss_sup.item()
-        lc += Loss_cot.item()
-        ld += Loss_diff.item()
+        # running_loss += total_loss.item()
+        # ls += Loss_sup.item()
+        # lc += Loss_cot.item()
+        # ld += Loss_diff.item()
 
-        if i % 40 == 39:    # print every 40 mini-batches
-            print('[%d, %5d] total loss: %.3f, loss_sup:%.3f, loss_cot:%.3f, loss_diff:%.3f, training acc 1: %.3f, training acc 2: %.3f' %
-                  (epoch + 1, i + 1, running_loss / 40, ls /40, lc/40, ld/40, 100. * (train_correct_S1+train_correct_U1) / (total_S1+total_U1), 100. * (train_correct_S2+train_correct_U2) / (total_S2+total_U2)))
-            running_loss = 0.0
-            ls = 0.0
-            lc = 0.0 
-            ld = 0.0
-            total_S1 = 0
-            total_S2 = 0
-            total_U1 = 0
-            total_U2 = 0
-            train_correct_S1 = 0
-            train_correct_S2 = 0
-            train_correct_U1 = 0
-            train_correct_U2 = 0
-        print('[%d, %5d]training acc 1: %.3f, training acc 2: %.3f' %(epoch + 1, i + 1, 100. * (train_correct_S1+train_correct_U1) / (total_S1+total_U1), 100. * (train_correct_S2+train_correct_U2) / (total_S2+total_U2)))
+        # if i % 40 == 39:    # print every 40 mini-batches
+        #     print('[%d, %5d] total loss: %.3f, loss_sup:%.3f, loss_cot:%.3f, loss_diff:%.3f, training acc 1: %.3f, training acc 2: %.3f' %
+        #           (epoch + 1, i + 1, running_loss / 40, ls /40, lc/40, ld/40, 100. * (train_correct_S1+train_correct_U1) / (total_S1+total_U1), 100. * (train_correct_S2+train_correct_U2) / (total_S2+total_U2)))
+        #     running_loss = 0.0
+        #     ls = 0.0
+        #     lc = 0.0 
+        #     ld = 0.0
+        #     total_S1 = 0
+        #     total_S2 = 0
+        #     total_U1 = 0
+        #     total_U2 = 0
+        #     train_correct_S1 = 0
+        #     train_correct_S2 = 0
+        #     train_correct_U1 = 0
+        #     train_correct_U2 = 0
+        print('[%d, %5d]training acc 1: %.3f' %(epoch + 1, i + 1, 100. * (train_correct_S1) / (total_S1)))
         i = i + 1
 
 def test(epoch):
+
+    net1.eval()
+    train_correct_S1 = 0
+    total_S1 = 0
+    with torch.no_grad():
+        # for batch_idx, (inputs, targets) in enumerate(trainloader):
+        for inputs, targets in zip(tensor_data, tensor_label):
+            inputs, targets = inputs.cuda(), targets.cuda()
+            _, S_logit1 = net1(inputs)
+            predictions_S1 = torch.max(S_logit1, 1)
+            train_correct_S1 += np.sum(predictions_S1[1].cpu().numpy() == targets.cpu().numpy())
+            total_S1 += targets.size(0)
+        print('training acc 1: %.3f' %(100. * (train_correct_S1) / (total_S1))) 
+        print('%d %d' %(train_correct_S1, total_S1)) 
+
     net1.eval()
     net2.eval()
     global best_acc1 

@@ -305,12 +305,12 @@ def train(epoch):
         _, U_logit2 = net2(inputs_U)
         
 
-        # # generate adversarial example 1
-        # perturbed_data1 = get_adv_example(net1, inputs_S1, labels_S1)
-        # perturbed_data2 = get_adv_example(net2, inputs_S2, labels_S2)
+        # generate adversarial example 1
+        perturbed_data1 = get_adv_example(net1, inputs_S1, labels_S1)
+        perturbed_data2 = get_adv_example(net2, inputs_S2, labels_S2)
 
-        # _, perturbed_logit1 = net1(perturbed_data2)
-        # _, perturbed_logit2 = net2(perturbed_data1)
+        _, perturbed_logit1 = net1(perturbed_data2)
+        _, perturbed_logit2 = net2(perturbed_data1)
 
 
         predictions_S1 = torch.max(S_logit1, 1)
@@ -319,24 +319,24 @@ def train(epoch):
         predictions_U2 = torch.max(U_logit2, 1)
         
         
-        # perturbed_data_U1 = get_adv_example(net1, inputs_U, predictions_U1[1])
-        # perturbed_data_U2 = get_adv_example(net2, inputs_U, predictions_U2[1])
+        perturbed_data_U1 = get_adv_example(net1, inputs_U, predictions_U1[1])
+        perturbed_data_U2 = get_adv_example(net2, inputs_U, predictions_U2[1])
 
-        # _, perturbed_logit_U1 = net1(perturbed_data_U2)
-        # _, perturbed_logit_U2 = net2(perturbed_data_U1)
+        _, perturbed_logit_U1 = net1(perturbed_data_U2)
+        _, perturbed_logit_U2 = net2(perturbed_data_U1)
 
-        # # zero the parameter gradients
-        # optimizer.zero_grad()
-        # net1.zero_grad()
-        # net2.zero_grad()
+        # zero the parameter gradients
+        optimizer.zero_grad()
+        net1.zero_grad()
+        net2.zero_grad()
 
         
-        # Loss_sup = loss_sup(S_logit1, S_logit2, labels_S1, labels_S2)
-        # Loss_cot = loss_cot(U_logit1, U_logit2)
-        # Loss_diff = loss_diff(S_logit1, S_logit2, perturbed_logit1, perturbed_logit2, U_logit1, U_logit2, perturbed_logit_U1, perturbed_logit_U2)
+        Loss_sup = loss_sup(S_logit1, S_logit2, labels_S1, labels_S2)
+        Loss_cot = loss_cot(U_logit1, U_logit2)
+        Loss_diff = loss_diff(S_logit1, S_logit2, perturbed_logit1, perturbed_logit2, U_logit1, U_logit2, perturbed_logit_U1, perturbed_logit_U2)
         
-        # total_loss = Loss_sup + lamda_cot*Loss_cot + lamda_diff*Loss_diff
-        # total_loss.backward()
+        total_loss = Loss_sup + lamda_cot*Loss_cot + lamda_diff*Loss_diff
+        total_loss.backward()
         # optimizer.step()
 
 
@@ -345,19 +345,19 @@ def train(epoch):
         train_correct_S1 += np.sum(predictions_S1[1].cpu().numpy() == labels_S1.cpu().numpy())
         total_S1 += labels_S1.size(0)
 
-        # train_correct_U1 += np.sum(predictions_U1[1].cpu().numpy() == labels_U.cpu().numpy())
-        # total_U1 += labels_U.size(0)
+        train_correct_U1 += np.sum(predictions_U1[1].cpu().numpy() == labels_U.cpu().numpy())
+        total_U1 += labels_U.size(0)
 
         train_correct_S2 += np.sum(predictions_S2[1].cpu().numpy() == labels_S2.cpu().numpy())
         total_S2 += labels_S2.size(0)
 
-        # train_correct_U2 += np.sum(predictions_U2[1].cpu().numpy() == labels_U.cpu().numpy())
-        # total_U2 += labels_U.size(0)
+        train_correct_U2 += np.sum(predictions_U2[1].cpu().numpy() == labels_U.cpu().numpy())
+        total_U2 += labels_U.size(0)
         # print statistics
-        # running_loss += total_loss.item()
-        # ls += Loss_sup.item()
-        # lc += Loss_cot.item()
-        # ld += Loss_diff.item()
+        running_loss += total_loss.item()
+        ls += Loss_sup.item()
+        lc += Loss_cot.item()
+        ld += Loss_diff.item()
 
         if i % 40 == 39:    # print every 40 mini-batches
             print('[%d, %5d] total loss: %.3f, loss_sup:%.3f, loss_cot:%.3f, loss_diff:%.3f, training acc 1: %.3f, training acc 2: %.3f' %

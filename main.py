@@ -254,8 +254,8 @@ net1 = co_train_classifier()
 net2 = co_train_classifier()
 net1.cuda()
 net2.cuda()
-# net1.load_state_dict(torch.load('co_train_classifier_1.pkl'))
-# net2.load_state_dict(torch.load('co_train_classifier_2.pkl'))
+net1.load_state_dict(torch.load('co_train_classifier_1.pkl'))
+net2.load_state_dict(torch.load('co_train_classifier_2.pkl'))
 params = list(net1.parameters()) + list(net2.parameters())
 # stochastic gradient descent with momentum 0.9 and weight decay0.0001 in paper page 7
 optimizer = optim.SGD(params, lr=0.1, momentum=0.9, weight_decay=0.0001)
@@ -287,7 +287,7 @@ def train(epoch):
     S_iter2 = iter(S_loader1)
     U_iter = iter(U_loader)
     
-    while(i < step):
+    while(i < 5):
         inputs_S1, labels_S1 = S_iter1.next()
         inputs_S2, labels_S2 = S_iter2.next()
         inputs_U, labels_U = U_iter.next() # note that label U will not be used for training. 
@@ -374,7 +374,7 @@ def train(epoch):
             train_correct_S2 = 0
             train_correct_U1 = 0
             train_correct_U2 = 0
-
+        print('[%d, %5d]training acc 1: %.3f, training acc 2: %.3f' %(epoch + 1, i + 1, 100. * (train_correct_S1+train_correct_U1) / (total_S1+total_U1), 100. * (train_correct_S2+train_correct_U2) / (total_S2+total_U2)))
         i = i + 1
 
 def test(epoch):
@@ -386,8 +386,10 @@ def test(epoch):
     correct2 = 0
     total1 = 0
     total2 = 0
+    trainset = torchvision.datasets.CIFAR10(root='./data', train=True, download=True, transform=transform)
+    trainloader_test = torch.utils.data.DataLoader(trainset, batch_size=512, shuffle=False, num_workers=2)
     with torch.no_grad():
-        for batch_idx, (inputs, targets) in enumerate(testloader):
+        for batch_idx, (inputs, targets) in enumerate(trainloader_test):
             inputs = inputs.cuda()
             targets = targets.cuda()
 
@@ -401,7 +403,7 @@ def test(epoch):
             total2 += targets.size(0)
             correct2 += predicted2[1].eq(targets).sum().item()
 
-            progress_bar(batch_idx, len(testloader), 'net1 Acc: %.3f%% (%d/%d) | net2 Acc: %.3f%% (%d/%d)'
+            progress_bar(batch_idx, len(trainloader_test), 'net1 Acc: %.3f%% (%d/%d) | net2 Acc: %.3f%% (%d/%d)'
                 % (100.*correct1/total1, correct1, total1, 100.*correct2/total2, correct2, total2))
 
     # Save checkpoint.
@@ -412,12 +414,12 @@ def test(epoch):
         print('Saving..')
         if not os.path.isdir('checkpoint'):
             os.mkdir('checkpoint')
-        torch.save(net1.state_dict(), './checkpoint/co_train_classifier_1.pkl')
-        torch.save(net2.state_dict(), './checkpoint/co_train_classifier_2.pkl')
+        # torch.save(net1.state_dict(), './checkpoint/co_train_classifier_1.pkl')
+        # torch.save(net2.state_dict(), './checkpoint/co_train_classifier_2.pkl')
         best_acc1 = acc1
         best_acc2 = acc2
 
 start_epoch = 0
-for epoch in range(start_epoch, 600):
+for epoch in range(start_epoch, 1):
     train(epoch)
     test(epoch)

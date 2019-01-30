@@ -302,8 +302,8 @@ def train(epoch):
 
         _, S_logit1 = net1(inputs_S1)
         _, S_logit2 = net2(inputs_S2)
-        _, U_logit1 = net1(inputs_U)
-        _, U_logit2 = net2(inputs_U)
+        # _, U_logit1 = net1(inputs_U)
+        # _, U_logit2 = net2(inputs_U)
 
         tensor_data.append(inputs_S1)
         tensor_label.append(labels_S1)   

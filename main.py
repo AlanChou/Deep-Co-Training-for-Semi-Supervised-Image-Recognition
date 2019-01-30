@@ -308,7 +308,7 @@ def train(epoch):
 
         _, S_logit1 = net1(inputs_S1)
         _, S_logit2 = net2(inputs_S2)
-        _, U_logit1 = net1(inputs_U)
+        _, U_logit1 = net1(inputs_S2)
         # _, U_logit2 = net2(inputs_U2)
 
         tensor_data.append(inputs_S1)
@@ -389,33 +389,33 @@ def train(epoch):
 
 def test(epoch):
 
-    # net1.eval()
-    # train_correct_S1 = 0
-    # total_S1 = 0
-    # with torch.no_grad():
-    #     # for batch_idx, (inputs, targets) in enumerate(trainloader):
-    #     for inputs, targets in zip(tensor_data, tensor_label):
-    #         inputs, targets = inputs.cuda(), targets.cuda()
-    #         _, S_logit1 = net1(inputs)
-    #         predictions_S1 = torch.max(S_logit1, 1)
-    #         train_correct_S1 += np.sum(predictions_S1[1].cpu().numpy() == targets.cpu().numpy())
-    #         total_S1 += targets.size(0)
-    #     print('training acc 1: %.3f' %(100. * (train_correct_S1) / (total_S1))) 
-    #     print('%d %d' %(train_correct_S1, total_S1)) 
+    net1.eval()
+    train_correct_S1 = 0
+    total_S1 = 0
+    with torch.no_grad():
+        # for batch_idx, (inputs, targets) in enumerate(trainloader):
+        for inputs, targets in zip(tensor_data, tensor_label):
+            inputs, targets = inputs.cuda(), targets.cuda()
+            _, S_logit1 = net1(inputs)
+            predictions_S1 = torch.max(S_logit1, 1)
+            train_correct_S1 += np.sum(predictions_S1[1].cpu().numpy() == targets.cpu().numpy())
+            total_S1 += targets.size(0)
+        print('training acc 1: %.3f' %(100. * (train_correct_S1) / (total_S1))) 
+        print('%d %d' %(train_correct_S1, total_S1)) 
 
-    # net2.eval()
-    # train_correct_S2= 0
-    # total_S2 = 0
-    # with torch.no_grad():
-    #     # for batch_idx, (inputs, targets) in enumerate(trainloader):
-    #     for inputs, targets in zip(tensor_data, tensor_label):
-    #         inputs, targets = inputs.cuda(), targets.cuda()
-    #         _, S_logit2= net2(inputs)
-    #         predictions_S2 = torch.max(S_logit2, 1)
-    #         train_correct_S2 += np.sum(predictions_S2[1].cpu().numpy() == targets.cpu().numpy())
-    #         total_S2 += targets.size(0)
-    #     print('training acc 2: %.3f' %(100. * (train_correct_S2) / (total_S2))) 
-    #     print('%d %d' %(train_correct_S2, total_S2)) 
+    net2.eval()
+    train_correct_S2= 0
+    total_S2 = 0
+    with torch.no_grad():
+        # for batch_idx, (inputs, targets) in enumerate(trainloader):
+        for inputs, targets in zip(tensor_data, tensor_label):
+            inputs, targets = inputs.cuda(), targets.cuda()
+            _, S_logit2= net2(inputs)
+            predictions_S2 = torch.max(S_logit2, 1)
+            train_correct_S2 += np.sum(predictions_S2[1].cpu().numpy() == targets.cpu().numpy())
+            total_S2 += targets.size(0)
+        print('training acc 2: %.3f' %(100. * (train_correct_S2) / (total_S2))) 
+        print('%d %d' %(train_correct_S2, total_S2)) 
 
     net1.eval()
     net2.eval()
@@ -460,5 +460,5 @@ def test(epoch):
 
 start_epoch = 0
 for epoch in range(start_epoch, 1):
-    # train(epoch)
+    train(epoch)
     test(epoch)

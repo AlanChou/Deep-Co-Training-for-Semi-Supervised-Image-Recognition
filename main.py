@@ -11,6 +11,11 @@ import os
 import math
 from torch.autograd import Variable
 from utils import progress_bar
+from tensorboardX import SummaryWriter 
+
+
+writer = SummaryWriter('tensorboard/')
+
 
 # hyper paramerters
 # some are created as global variables and will be assigned with the right value later
@@ -105,15 +110,17 @@ class co_train_classifier(nn.Module):
 
 def adjust_learning_rate(optimizer, epoch):
     """cosine scheduling"""
+    epoch = epoch + 1
     lr = 0.05*(1.0+math.cos((epoch-1)*math.pi/600))
     for param_group in optimizer.param_groups:
         param_group['lr'] = lr
 
 
 def adjust_lamda(epoch):
+    epoch = epoch + 1
     global lamda_cot
     global lamda_diff
-    if epoch < 80:
+    if epoch <= 80:
         lamda_cot = lamda_cot_max*math.exp(-5*(1-epoch/80)**2)
         lamda_diff = lamda_diff_max*math.exp(-5*(1-epoch/80)**2)
     else: 
@@ -122,17 +129,27 @@ def adjust_lamda(epoch):
 
 
 
-def jsd(p,q):
-    kld = nn.KLDivLoss(reduction = 'elementwise_mean')
 
-    # kld = nn.KLDivLoss()
+# The default averaging means that the loss is actually not the KL Divergence because the terms are already probability weighted. A future release of PyTorch may move the default loss closer to the mathematical definition.
+# To get the real KL Divergence, use size_average=False, and then divide the output by the batch size.
+
+# Example:
+# >>> loss = nn.KLDivLoss(size_average=False)
+# >>> batch_size = 5
+# >>> log_probs1 = F.log_softmax(torch.randn(batch_size, 10), 1)
+# >>> probs2 = F.softmax(torch.randn(batch_size, 10), 1)
+# >>> loss(log_probs1, probs2) / batch_size
+# version 0.4.1
+
+def jsd(p,q):
+    kld = nn.KLDivLoss(size_average=False)
     S = nn.Softmax(dim = 1)
     LS = nn.LogSoftmax(dim = 1)
     a = S(p)
     b = S(q)
     c = LS(0.5*(p + q))
 
-    return 0.5*kld(c,a) + 0.5*kld(c, b)
+    return (0.5*kld(c,a) + 0.5*kld(c, b))/batch_size
 
 def loss_sup(logit1, logit2, labels_S1, labels_S2):
     # CE, by default, is averaged over each loss element in the batch
@@ -196,12 +213,12 @@ def get_adv_example(net, inputs, labels, optimizer):
     inputs.requires_grad_()
     optimizer.zero_grad()
     ce = nn.CrossEntropyLoss()
-    _, outputs=net(inputs)
+    _, outputs = net(inputs)
     loss = ce(outputs,labels)
     loss.backward()
-    epsilon=0.1
-    x_grad=torch.sign(inputs.grad)
-    x_adversarial=torch.clamp(inputs.detach()+epsilon*x_grad,0,1)    
+    epsilon = 0.1
+    x_grad = torch.sign(inputs.grad)
+    x_adversarial = torch.clamp(inputs.detach()+epsilon*x_grad,0,1)    
     
     return x_adversarial
 
@@ -210,7 +227,8 @@ def get_adv_example(net, inputs, labels, optimizer):
 # standard data augmentation on cifar10
 transform = transforms.Compose([
     transforms.RandomCrop(32, padding=4),
-    transforms.RandomHorizontalFlip(),
+    transforms.RandomAffine(0, translate=(1/16,1/16)),
+    # transforms.RandomHorizontalFlip(),
     transforms.ToTensor(),
     transforms.Normalize((0.4914, 0.4822, 0.4465), (0.2023, 0.1994, 0.2010)),
 ])
@@ -269,10 +287,11 @@ step = len(trainset)/batch_size
 # training
 net1 = co_train_classifier()
 net2 = co_train_classifier()
+
 net1.cuda()
 net2.cuda()
-# net1.load_state_dict(torch.load('co_train_classifier_1.pkl'))
-# net2.load_state_dict(torch.load('co_train_classifier_2.pkl'))
+# net1.load_state_dict(torch.load('./checkpoint/co_train_classifier_1_33.pkl'))
+# net2.load_state_dict(torch.load('./checkpoint/co_train_classifier_2_33.pkl'))
 params = list(net1.parameters()) + list(net2.parameters())
 # stochastic gradient descent with momentum 0.9 and weight decay0.0001 in paper page 7
 optimizer = optim.SGD(params, lr=0.1, momentum=0.9, weight_decay=0.0001)
@@ -318,19 +337,17 @@ def train(epoch):
         inputs_U = inputs_U.cuda()    
 
 
-        _, S_logit1 = net1(inputs_S1)
-        _, S_logit2 = net2(inputs_S2)
-        _, U_logit1 = net1(inputs_U)
-        _, U_logit2 = net2(inputs_U)
-        
-
         # generate adversarial example 1
         perturbed_data1 = get_adv_example(net1, inputs_S1, labels_S1, optimizer)
         perturbed_data2 = get_adv_example(net2, inputs_S2, labels_S2, optimizer)
 
         _, perturbed_logit1 = net1(perturbed_data2)
         _, perturbed_logit2 = net2(perturbed_data1)
-
+       
+        _, S_logit1 = net1(inputs_S1)
+        _, S_logit2 = net2(inputs_S2)
+        _, U_logit1 = net1(inputs_U)
+        _, U_logit2 = net2(inputs_U)
 
         predictions_S1 = torch.max(S_logit1, 1)
         predictions_S2 = torch.max(S_logit2, 1)
@@ -378,12 +395,15 @@ def train(epoch):
         ld += Loss_diff.item()
         # print statistics
         # progress_bar(i, 50000, 
+        writer.add_scalars('data/loss', {'loss_sup': Loss_sup.item(), 'loss_cot': lamda_cot*Loss_cot.item(), 'loss_diff': lamda_diff*Loss_diff.item()}, (epoch+1)*(i+1))
+        writer.add_scalars('data/training_accuracy', {'net1 acc': 100. * (train_correct_S1+train_correct_U1) / (total_S1+total_U1), 'net2 acc': 100. * (train_correct_S2+train_correct_U2) / (total_S2+total_U2)}, (epoch+1)*(i+1))
         if i%50 == 0:
             print('net1 acc: %.3f%% | net2 acc: %.3f%% | total loss: %.3f | loss_sup: %.3f | loss_cot: %.3f | loss_diff: %.3f'
                 % (100. * (train_correct_S1+train_correct_U1) / (total_S1+total_U1), 100. * (train_correct_S2+train_correct_U2) / (total_S2+total_U2), running_loss/(i+1), ls/(i+1), lc/(i+1), ld/(i+1)))
             
-
         i = i + 1
+    torch.save(net1.state_dict(), './checkpoint/co_train_classifier_1_'+str(epoch)+'.pkl')
+    torch.save(net2.state_dict(), './checkpoint/co_train_classifier_2_'+str(epoch)+'.pkl')
 
 def test(epoch):
     net1.eval()
@@ -408,24 +428,29 @@ def test(epoch):
             predicted2 = outputs2.max(1)
             total2 += targets.size(0)
             correct2 += predicted2[1].eq(targets).sum().item()
-
+            
             progress_bar(batch_idx, len(testloader), '\nnet1 acc: %.3f%% (%d/%d) | net2 acc: %.3f%% (%d/%d)'
                 % (100.*correct1/total1, correct1, total1, 100.*correct2/total2, correct2, total2))
 
+    writer.add_scalars('data/testing_accuracy', {'net1 acc': 100.*correct1/total1, 'net2 acc': 100.*correct2/total2}, epoch)
     # Save checkpoint.
     acc1 = 100.*correct1/total1
     acc2 = 100.*correct2/total2
  
-    if acc1 > best_acc1 or acc2 > best_acc2:
-        print('Saving..')
-        if not os.path.isdir('checkpoint'):
-            os.mkdir('checkpoint')
-        torch.save(net1.state_dict(), './checkpoint/co_train_classifier_1.pkl')
-        torch.save(net2.state_dict(), './checkpoint/co_train_classifier_2.pkl')
-        best_acc1 = acc1
-        best_acc2 = acc2
+
+    # if acc1 > best_acc1 or acc2 > best_acc2:
+    #     print('Saving..')
+    #     if not os.path.isdir('checkpoint'):
+    #         os.mkdir('checkpoint')
+    #     torch.save(net1.state_dict(), './checkpoint/co_train_classifier_1.pkl')
+    #     torch.save(net2.state_dict(), './checkpoint/co_train_classifier_2.pkl')
+    #     best_acc1 = acc1
+    #     best_acc2 = acc2
 
 start_epoch = 0
 for epoch in range(start_epoch, 600):
     train(epoch)
     test(epoch)
+
+writer.export_scalars_to_json("./tensorboard/output.json")
+writer.close()

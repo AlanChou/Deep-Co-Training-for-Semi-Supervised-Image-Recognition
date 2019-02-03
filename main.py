@@ -149,7 +149,7 @@ def jsd(p,q):
     b = S(q)
     c = LS(0.5*(p + q))
 
-    return (0.5*kld(c,a) + 0.5*kld(c, b))/batch_size
+    return (0.5*kld(c,a) + 0.5*kld(c, b))/92
 
 def loss_sup(logit1, logit2, labels_S1, labels_S2):
     # CE, by default, is averaged over each loss element in the batch
@@ -168,18 +168,20 @@ def loss_diff(logit1, logit2, perturbed_logit1, perturbed_logit2, U_logit1, U_lo
     
     a = S(logit2) * LS(perturbed_logit1)
     a = torch.sum(a)
+    # a = a/8
 
     b = S(logit1) * LS(perturbed_logit2)
     b = torch.sum(b)
+    # b = b/8
 
     c = S(U_logit2) * LS(perturbed_logit_U1)
     c = torch.sum(c)
-
+    # c = c/92
+    
     d = S(U_logit1) * LS(perturbed_logit_U2)
     d = torch.sum(d)
-
-    return -(a+b+c+d)/batch_size 
-
+    # d = d/92
+    return -(a+b+c+d)/100
 
 # This function is copied from the official website of Pytorch. 
 # Note that we clip to -1, 1 instead of 0, 1
@@ -209,7 +211,7 @@ def loss_diff(logit1, logit2, perturbed_logit1, perturbed_logit2, U_logit1, U_lo
 
 
 def get_adv_example(net, inputs, labels, optimizer):
-    
+    net.eval()
     inputs.requires_grad_()
     optimizer.zero_grad()
     ce = nn.CrossEntropyLoss()
@@ -219,16 +221,16 @@ def get_adv_example(net, inputs, labels, optimizer):
     epsilon = 0.1
     x_grad = torch.sign(inputs.grad)
     x_adversarial = torch.clamp(inputs.detach()+epsilon*x_grad,0,1)    
-    
+    net.train()
     return x_adversarial
 
 # labelled data propotion 4000/50000 for cifar 10 
 # unlabelled data propotion 46000/50000 for cifar 10 
 # standard data augmentation on cifar10
 transform = transforms.Compose([
-    transforms.RandomCrop(32, padding=4),
+    # transforms.RandomCrop(32, padding=4),
     transforms.RandomAffine(0, translate=(1/16,1/16)),
-    # transforms.RandomHorizontalFlip(),
+    transforms.RandomHorizontalFlip(),
     transforms.ToTensor(),
     transforms.Normalize((0.4914, 0.4822, 0.4465), (0.2023, 0.1994, 0.2010)),
 ])
@@ -250,12 +252,21 @@ classes = ('plane', 'car', 'bird', 'cat', 'deer', 'dog', 'frog', 'horse', 'ship'
 
 trainset = torchvision.datasets.CIFAR10(root='./data', train=True,
                                         download=True, transform=transform)
+
 trainloader = torch.utils.data.DataLoader(trainset, batch_size=1,
                                           shuffle=False, num_workers=2)
+
+S_loader1 = torch.utils.data.DataLoader(trainset, batch_size=8,
+                                          shuffle=True, num_workers=2)
+
+S_loader2 = torch.utils.data.DataLoader(trainset, batch_size=8,
+                                          shuffle=True, num_workers=2)
+
+
 S_idx = []
 U_idx = []
 dataiter = iter(trainloader)
-train = 10*[[]]
+train = [[],[],[],[],[],[],[],[],[],[]]
 for i in range(50000):
     inputs, labels = dataiter.next()
     train[labels].append(i)
@@ -290,11 +301,11 @@ net2 = co_train_classifier()
 
 net1.cuda()
 net2.cuda()
-# net1.load_state_dict(torch.load('./checkpoint/co_train_classifier_1_33.pkl'))
-# net2.load_state_dict(torch.load('./checkpoint/co_train_classifier_2_33.pkl'))
+# net1.load_state_dict(torch.load('./checkpoint_without_diff/co_train_classifier_1_44.pkl'))
+# net2.load_state_dict(torch.load('./checkpoint_without_diff/co_train_classifier_2_44.pkl'))
 params = list(net1.parameters()) + list(net2.parameters())
 # stochastic gradient descent with momentum 0.9 and weight decay0.0001 in paper page 7
-optimizer = optim.SGD(params, lr=0.1, momentum=0.9, weight_decay=0.0001)
+optimizer = optim.SGD(params, lr=0.05, momentum=0.9, weight_decay=0.0001)
 ce = nn.CrossEntropyLoss() 
 
 
@@ -322,7 +333,7 @@ def train(epoch):
 
     # create iterator for b1, b2, bu
     S_iter1 = iter(S_loader1)
-    S_iter2 = iter(S_loader1)
+    S_iter2 = iter(S_loader2)
     U_iter = iter(U_loader)
     print('epoch:',epoch)
     while(i < step):
@@ -337,7 +348,7 @@ def train(epoch):
         inputs_U = inputs_U.cuda()    
 
 
-        # generate adversarial example 1
+        # generate adversarial example 
         perturbed_data1 = get_adv_example(net1, inputs_S1, labels_S1, optimizer)
         perturbed_data2 = get_adv_example(net2, inputs_S2, labels_S2, optimizer)
 
@@ -373,6 +384,8 @@ def train(epoch):
         Loss_diff = loss_diff(S_logit1, S_logit2, perturbed_logit1, perturbed_logit2, U_logit1, U_logit2, perturbed_logit_U1, perturbed_logit_U2)
         
         total_loss = Loss_sup + lamda_cot*Loss_cot + lamda_diff*Loss_diff
+
+        total_loss = Loss_sup 
         total_loss.backward()
         optimizer.step()
 
@@ -394,11 +407,15 @@ def train(epoch):
         lc += Loss_cot.item()
         ld += Loss_diff.item()
         # print statistics
-        # progress_bar(i, 50000, 
+        
         writer.add_scalars('data/loss', {'loss_sup': Loss_sup.item(), 'loss_cot': lamda_cot*Loss_cot.item(), 'loss_diff': lamda_diff*Loss_diff.item()}, (epoch+1)*(i+1))
-        writer.add_scalars('data/training_accuracy', {'net1 acc': 100. * (train_correct_S1+train_correct_U1) / (total_S1+total_U1), 'net2 acc': 100. * (train_correct_S2+train_correct_U2) / (total_S2+total_U2)}, (epoch+1)*(i+1))
-        if i%50 == 0:
-            print('net1 acc: %.3f%% | net2 acc: %.3f%% | total loss: %.3f | loss_sup: %.3f | loss_cot: %.3f | loss_diff: %.3f'
+        # writer.add_scalars('data/loss', {'loss_sup': Loss_sup.item()}, (epoch+1)*(i+1))
+
+        writer.add_scalars('data/training_accuracy', {'net1 acc': 100. * (train_correct_S1) / (total_S1), 'net2 acc': 100. * (train_correct_S2) / (total_S2)}, (epoch+1)*(i+1))
+        if (i+1)%50 == 0:
+            print('net1 acc: %.3f%% | net2 acc: %.3f%% | total loss: %.3f | loss_sup: %.3f | loss_cot: %.3f | loss_diff: %.3f  '
+                # % (100. * (train_correct_S1) / (total_S1), 100. * (train_correct_S2) / (total_S2), running_loss/(i+1), ls/(i+1)))
+
                 % (100. * (train_correct_S1+train_correct_U1) / (total_S1+total_U1), 100. * (train_correct_S2+train_correct_U2) / (total_S2+total_U2), running_loss/(i+1), ls/(i+1), lc/(i+1), ld/(i+1)))
             
         i = i + 1

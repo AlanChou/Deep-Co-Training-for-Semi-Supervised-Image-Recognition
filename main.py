@@ -14,7 +14,7 @@ from utils import progress_bar
 from tensorboardX import SummaryWriter 
 
 
-writer = SummaryWriter('tensorboard/')
+writer = SummaryWriter('tensorboard_no_clamp/')
 
 
 # hyper paramerters
@@ -218,9 +218,11 @@ def get_adv_example(net, inputs, labels, optimizer):
     _, outputs = net(inputs)
     loss = ce(outputs,labels)
     loss.backward()
-    epsilon = 0.1
+    epsilon = 0.02
     x_grad = torch.sign(inputs.grad)
-    x_adversarial = torch.clamp(inputs.detach()+epsilon*x_grad,0,1)    
+    # x_adversarial = torch.clamp(inputs.detach()+epsilon*x_grad,-1,1)   
+    # the author said that they didn't clamp 
+    x_adversarial = inputs.detach()+epsilon*x_grad
     net.train()
     return x_adversarial
 
@@ -301,8 +303,9 @@ net2 = co_train_classifier()
 
 net1.cuda()
 net2.cuda()
-# net1.load_state_dict(torch.load('./checkpoint_without_diff/co_train_classifier_1_44.pkl'))
-# net2.load_state_dict(torch.load('./checkpoint_without_diff/co_train_classifier_2_44.pkl'))
+# net1.load_state_dict(torch.load('./checkpoint/co_train_classifier_1_599.pkl'))
+# net2.load_state_dict(torch.load('./checkpoint/co_train_classifier_2_599.pkl'))
+# print("scuccessfully load")
 params = list(net1.parameters()) + list(net2.parameters())
 # stochastic gradient descent with momentum 0.9 and weight decay0.0001 in paper page 7
 optimizer = optim.SGD(params, lr=0.05, momentum=0.9, weight_decay=0.0001)
@@ -336,6 +339,7 @@ def train(epoch):
     S_iter2 = iter(S_loader2)
     U_iter = iter(U_loader)
     print('epoch:',epoch)
+    print('\n')
     while(i < step):
         inputs_S1, labels_S1 = S_iter1.next()
         inputs_S2, labels_S2 = S_iter2.next()
@@ -348,7 +352,7 @@ def train(epoch):
         inputs_U = inputs_U.cuda()    
 
 
-        # generate adversarial example 
+        # generate adversarial example 1
         perturbed_data1 = get_adv_example(net1, inputs_S1, labels_S1, optimizer)
         perturbed_data2 = get_adv_example(net2, inputs_S2, labels_S2, optimizer)
 
@@ -385,7 +389,7 @@ def train(epoch):
         
         total_loss = Loss_sup + lamda_cot*Loss_cot + lamda_diff*Loss_diff
 
-        total_loss = Loss_sup 
+        # total_loss = Loss_sup 
         total_loss.backward()
         optimizer.step()
 
@@ -419,8 +423,8 @@ def train(epoch):
                 % (100. * (train_correct_S1+train_correct_U1) / (total_S1+total_U1), 100. * (train_correct_S2+train_correct_U2) / (total_S2+total_U2), running_loss/(i+1), ls/(i+1), lc/(i+1), ld/(i+1)))
             
         i = i + 1
-    torch.save(net1.state_dict(), './checkpoint/co_train_classifier_1_'+str(epoch)+'.pkl')
-    torch.save(net2.state_dict(), './checkpoint/co_train_classifier_2_'+str(epoch)+'.pkl')
+    torch.save(net1.state_dict(), './checkpoint_no_clamp/co_train_classifier_1_'+str(epoch)+'.pkl')
+    torch.save(net2.state_dict(), './checkpoint_no_clamp/co_train_classifier_2_'+str(epoch)+'.pkl')
 
 def test(epoch):
     net1.eval()
@@ -469,5 +473,5 @@ for epoch in range(start_epoch, 600):
     train(epoch)
     test(epoch)
 
-writer.export_scalars_to_json("./tensorboard/output.json")
+writer.export_scalars_to_json("./tensorboard_no_clamp/output.json")
 writer.close()

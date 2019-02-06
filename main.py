@@ -12,14 +12,17 @@ import math
 from torch.autograd import Variable
 from utils import progress_bar
 from tensorboardX import SummaryWriter 
+from random import shuffle
 
-
-writer = SummaryWriter('tensorboard_no_clamp/')
+writer = SummaryWriter('tensorboard/')
 
 
 # hyper paramerters
 # some are created as global variables and will be assigned with the right value later
+class_num = 10 # since it's cifar10 so it's set to 10
 batch_size = 100
+unlabelled_batch_size = 92 # note that the ratio of labelled/unlabelled data need to be equal to 4000/46000
+labelled_batch_size = batch_size - unlabelled_batch_size
 lamda_cot_max = 10
 lamda_diff_max = 0.5
 lamda_cot = 0
@@ -149,7 +152,7 @@ def jsd(p,q):
     b = S(q)
     c = LS(0.5*(p + q))
 
-    return (0.5*kld(c,a) + 0.5*kld(c, b))/92
+    return (0.5*kld(c,a) + 0.5*kld(c, b))/unlabelled_batch_size
 
 def loss_sup(logit1, logit2, labels_S1, labels_S2):
     # CE, by default, is averaged over each loss element in the batch
@@ -168,46 +171,16 @@ def loss_diff(logit1, logit2, perturbed_logit1, perturbed_logit2, U_logit1, U_lo
     
     a = S(logit2) * LS(perturbed_logit1)
     a = torch.sum(a)
-    # a = a/8
 
     b = S(logit1) * LS(perturbed_logit2)
     b = torch.sum(b)
-    # b = b/8
 
     c = S(U_logit2) * LS(perturbed_logit_U1)
     c = torch.sum(c)
-    # c = c/92
     
     d = S(U_logit1) * LS(perturbed_logit_U2)
     d = torch.sum(d)
-    # d = d/92
-    return -(a+b+c+d)/100
-
-# This function is copied from the official website of Pytorch. 
-# Note that we clip to -1, 1 instead of 0, 1
-# def fgsm_attack(image, epsilon, data_grad):
-#     # Collect the element-wise sign of the data gradient
-#     sign_data_grad = data_grad.sign()
-#     # Create the perturbed image by adjusting each pixel of the input image
-#     perturbed_image = image + epsilon*sign_data_grad
-#     # Adding clipping to maintain [-1,1] range
-#     perturbed_image = torch.clamp(perturbed_image, -1, 1)
-#     # Return the perturbed image
-#     return perturbed_image
-
-# def get_adv_example(net, inputs, labels):
-#     # generate adversarial example 
-#     net.eval()
-#     inputs.requires_grad = True
-#     ce = nn.CrossEntropyLoss() 
-#     _,  logits = net(inputs)
-#     loss = ce(logits, labels)
-#     net.zero_grad()
-#     loss.backward(retain_graph=True)
-#     inputs_grad = inputs.grad.data
-#     perturbed_data = fgsm_attack(inputs, 0.1, inputs_grad)
-#     net.train()
-#     return perturbed_data
+    return -(a+b+c+d)/batch_size
 
 
 def get_adv_example(net, inputs, labels, optimizer):
@@ -230,8 +203,8 @@ def get_adv_example(net, inputs, labels, optimizer):
 # unlabelled data propotion 46000/50000 for cifar 10 
 # standard data augmentation on cifar10
 transform = transforms.Compose([
-    # transforms.RandomCrop(32, padding=4),
-    transforms.RandomAffine(0, translate=(1/16,1/16)),
+    # transforms.RandomCrop(32, padding=4), #they didn't use random crop
+    transforms.RandomAffine(0, translate=(1/16,1/16)), # translation at most two pixels
     transforms.RandomHorizontalFlip(),
     transforms.ToTensor(),
     transforms.Normalize((0.4914, 0.4822, 0.4465), (0.2023, 0.1994, 0.2010)),
@@ -258,24 +231,25 @@ trainset = torchvision.datasets.CIFAR10(root='./data', train=True,
 trainloader = torch.utils.data.DataLoader(trainset, batch_size=1,
                                           shuffle=False, num_workers=2)
 
-S_loader1 = torch.utils.data.DataLoader(trainset, batch_size=8,
-                                          shuffle=True, num_workers=2)
-
-S_loader2 = torch.utils.data.DataLoader(trainset, batch_size=8,
-                                          shuffle=True, num_workers=2)
-
-
 S_idx = []
 U_idx = []
 dataiter = iter(trainloader)
 train = [[],[],[],[],[],[],[],[],[],[]]
-for i in range(50000):
+for i in range(len(trainset)):
     inputs, labels = dataiter.next()
     train[labels].append(i)
 
-for i in range(10):
+for i in range(class_num):
+    shuffle(train[i])
     S_idx = S_idx + train[i][0:400]
     U_idx = U_idx + train[i][400:]
+
+#save the indexes in case we need the exact ones for comparison
+with open("labelled_index.txt","wb") as fp:
+    pickle.dump(S_idx,fp)
+
+with open("unlabelled_index.txt","wb") as fp:
+    pickle.dump(U_idx,fp)
 
 S_sampler = torch.utils.data.SubsetRandomSampler(S_idx)
 U_sampler = torch.utils.data.SubsetRandomSampler(U_idx)
@@ -283,29 +257,25 @@ U_sampler = torch.utils.data.SubsetRandomSampler(U_idx)
 
 
 S_loader1 = torch.utils.data.DataLoader(
-        trainset, batch_size=8, sampler=S_sampler,
+        trainset, batch_size=labelled_batch_size, sampler=S_sampler,
         num_workers=2, pin_memory=True)
 
 S_loader2 = torch.utils.data.DataLoader(
-        trainset, batch_size=8, sampler=S_sampler,
+        trainset, batch_size=labelled_batch_size, sampler=S_sampler,
         num_workers=2, pin_memory=True)
 
 U_loader = torch.utils.data.DataLoader(
-        trainset, batch_size=92, sampler=U_sampler,
+        trainset, batch_size=unlabelled_batch_size, sampler=U_sampler,
         num_workers=2, pin_memory=True)
 
 
 
 step = len(trainset)/batch_size
-# training
 net1 = co_train_classifier()
 net2 = co_train_classifier()
 
 net1.cuda()
 net2.cuda()
-# net1.load_state_dict(torch.load('./checkpoint/co_train_classifier_1_599.pkl'))
-# net2.load_state_dict(torch.load('./checkpoint/co_train_classifier_2_599.pkl'))
-# print("scuccessfully load")
 params = list(net1.parameters()) + list(net2.parameters())
 # stochastic gradient descent with momentum 0.9 and weight decay0.0001 in paper page 7
 optimizer = optim.SGD(params, lr=0.05, momentum=0.9, weight_decay=0.0001)
@@ -339,11 +309,10 @@ def train(epoch):
     S_iter2 = iter(S_loader2)
     U_iter = iter(U_loader)
     print('epoch:',epoch)
-    print('\n')
     while(i < step):
         inputs_S1, labels_S1 = S_iter1.next()
         inputs_S2, labels_S2 = S_iter2.next()
-        inputs_U, labels_U = U_iter.next() # note that label U will not be used for training. 
+        inputs_U, labels_U = U_iter.next() # note that labels_U will not be used for training. 
 
         inputs_S1 = inputs_S1.cuda()
         labels_S1 = labels_S1.cuda()
@@ -351,8 +320,6 @@ def train(epoch):
         labels_S2 = labels_S2.cuda()
         inputs_U = inputs_U.cuda()    
 
-
-        # generate adversarial example 1
         perturbed_data1 = get_adv_example(net1, inputs_S1, labels_S1, optimizer)
         perturbed_data2 = get_adv_example(net2, inputs_S2, labels_S2, optimizer)
 
@@ -388,8 +355,6 @@ def train(epoch):
         Loss_diff = loss_diff(S_logit1, S_logit2, perturbed_logit1, perturbed_logit2, U_logit1, U_logit2, perturbed_logit_U1, perturbed_logit_U2)
         
         total_loss = Loss_sup + lamda_cot*Loss_cot + lamda_diff*Loss_diff
-
-        # total_loss = Loss_sup 
         total_loss.backward()
         optimizer.step()
 
@@ -418,8 +383,6 @@ def train(epoch):
         writer.add_scalars('data/training_accuracy', {'net1 acc': 100. * (train_correct_S1) / (total_S1), 'net2 acc': 100. * (train_correct_S2) / (total_S2)}, (epoch+1)*(i+1))
         if (i+1)%50 == 0:
             print('net1 acc: %.3f%% | net2 acc: %.3f%% | total loss: %.3f | loss_sup: %.3f | loss_cot: %.3f | loss_diff: %.3f  '
-                # % (100. * (train_correct_S1) / (total_S1), 100. * (train_correct_S2) / (total_S2), running_loss/(i+1), ls/(i+1)))
-
                 % (100. * (train_correct_S1+train_correct_U1) / (total_S1+total_U1), 100. * (train_correct_S2+train_correct_U2) / (total_S2+total_U2), running_loss/(i+1), ls/(i+1), lc/(i+1), ld/(i+1)))
             
         i = i + 1
@@ -473,5 +436,5 @@ for epoch in range(start_epoch, 600):
     train(epoch)
     test(epoch)
 
-writer.export_scalars_to_json("./tensorboard_no_clamp/output.json")
+writer.export_scalars_to_json("./tensorboard/output.json")
 writer.close()

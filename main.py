@@ -1,4 +1,3 @@
-
 import torch
 import torchvision
 import torchvision.transforms as transforms
@@ -13,59 +12,84 @@ from torch.autograd import Variable
 from utils import progress_bar
 from tensorboardX import SummaryWriter 
 from random import shuffle
+import pickle
+
+
 
 writer = SummaryWriter('tensorboard/')
-
-
+# cifar10_dir = '/home/hsinpingchou/multi-view/data/'
 # hyper paramerters
 # some are created as global variables and will be assigned with the right value later
-class_num = 10 # since it's cifar10 so it's set to 10
+
+# main
+# for reproducibility
+torch.backends.cudnn.enabled = True
+torch.backends.cudnn.benchmark = True
+
+seed = 1234
+torch.manual_seed(seed)
+torch.cuda.manual_seed(seed)
+np.random.seed(seed)
+
+np.set_printoptions(precision=4)
+torch.set_printoptions(precision=4)
+
+start_epoch = 0
+end_epoch = 600
+
+class_num = 10 # cifar10 
 batch_size = 100
 unlabelled_batch_size = 92 # note that the ratio of labelled/unlabelled data need to be equal to 4000/46000
 labelled_batch_size = batch_size - unlabelled_batch_size
 lamda_cot_max = 10
-lamda_diff_max = 0.5
+lamda_diff_max = 1
 lamda_cot = 0
 lamda_diff = 0
 best_acc1 = 0
 best_acc2 = 0
+
+
+# parser = argparse.ArgumentParser(
+#     description='Deep Co-Training')
+
+
 
 class co_train_classifier(nn.Module):
     def __init__(self):
         super(co_train_classifier, self).__init__()
         self.c1 = nn.Conv2d(3, 128, kernel_size=3, padding=1)
         self.b1 = nn.BatchNorm2d(128)
-        self.r1 = nn.LeakyReLU(negative_slope=0.1, inplace=True)
+        self.r1 = nn.LeakyReLU(negative_slope=0.1, inplace=False)
         self.c2 = nn.Conv2d(128, 128, kernel_size=3, padding=1)
         self.b2 = nn.BatchNorm2d(128)
-        self.r2 = nn.LeakyReLU(negative_slope=0.1, inplace=True)
+        self.r2 = nn.LeakyReLU(negative_slope=0.1, inplace=False)
         self.c3 = nn.Conv2d(128, 128, kernel_size=3, padding=1)
         self.b3 = nn.BatchNorm2d(128)
-        self.r3 = nn.LeakyReLU(negative_slope=0.1, inplace=True)
+        self.r3 = nn.LeakyReLU(negative_slope=0.1, inplace=False)
         self.m1 = nn.MaxPool2d(kernel_size=2, stride=2)
         self.d1 = nn.Dropout2d(p=0.5)
 
         self.c4 = nn.Conv2d(128, 256, kernel_size=3, padding=1)
         self.b4 = nn.BatchNorm2d(256)
-        self.r4 = nn.LeakyReLU(negative_slope=0.1, inplace=True)
+        self.r4 = nn.LeakyReLU(negative_slope=0.1, inplace=False)
         self.c5 = nn.Conv2d(256, 256, kernel_size=3, padding=1)
         self.b5 = nn.BatchNorm2d(256)
-        self.r5 = nn.LeakyReLU(negative_slope=0.1, inplace=True)
+        self.r5 = nn.LeakyReLU(negative_slope=0.1, inplace=False)
         self.c6 = nn.Conv2d(256, 256, kernel_size=3, padding=1)
         self.b6 = nn.BatchNorm2d(256)
-        self.r6 = nn.LeakyReLU(negative_slope=0.1, inplace=True)
+        self.r6 = nn.LeakyReLU(negative_slope=0.1, inplace=False)
         self.m2 = nn.MaxPool2d(kernel_size=2, stride=2)
         self.d2 = nn.Dropout2d(p=0.5)
 
         self.c7 = nn.Conv2d(256, 512, kernel_size=3, padding=1)
         self.b7 = nn.BatchNorm2d(512)
-        self.r7 = nn.LeakyReLU(negative_slope=0.1, inplace=True)
+        self.r7 = nn.LeakyReLU(negative_slope=0.1, inplace=False)
         self.c8 = nn.Conv2d(512, 256, kernel_size=3, padding=1)
         self.b8 = nn.BatchNorm2d(256)
-        self.r8 = nn.LeakyReLU(negative_slope=0.1, inplace=True)
+        self.r8 = nn.LeakyReLU(negative_slope=0.1, inplace=False)
         self.c9 = nn.Conv2d(256, 128, kernel_size=3, padding=1)
         self.b9 = nn.BatchNorm2d(128)
-        self.r9 = nn.LeakyReLU(negative_slope=0.1, inplace=True)
+        self.r9 = nn.LeakyReLU(negative_slope=0.1, inplace=False)
 
         self.fc = nn.Linear(128, 10)
         self.sf = nn.Softmax(dim = 1)
@@ -132,7 +156,7 @@ def adjust_lamda(epoch):
 
 
 
-
+# PyTorch version 0.4.1
 # The default averaging means that the loss is actually not the KL Divergence because the terms are already probability weighted. A future release of PyTorch may move the default loss closer to the mathematical definition.
 # To get the real KL Divergence, use size_average=False, and then divide the output by the batch size.
 
@@ -142,7 +166,7 @@ def adjust_lamda(epoch):
 # >>> log_probs1 = F.log_softmax(torch.randn(batch_size, 10), 1)
 # >>> probs2 = F.softmax(torch.randn(batch_size, 10), 1)
 # >>> loss(log_probs1, probs2) / batch_size
-# version 0.4.1
+
 
 def jsd(p,q):
     kld = nn.KLDivLoss(size_average=False)
@@ -172,14 +196,18 @@ def loss_diff(logit1, logit2, perturbed_logit1, perturbed_logit2, U_logit1, U_lo
     a = S(logit2) * LS(perturbed_logit1)
     a = torch.sum(a)
 
+
     b = S(logit1) * LS(perturbed_logit2)
     b = torch.sum(b)
 
+    
     c = S(U_logit2) * LS(perturbed_logit_U1)
     c = torch.sum(c)
-    
+
+
     d = S(U_logit1) * LS(perturbed_logit_U2)
     d = torch.sum(d)
+
     return -(a+b+c+d)/batch_size
 
 
@@ -187,17 +215,47 @@ def get_adv_example(net, inputs, labels, optimizer):
     net.eval()
     inputs.requires_grad_()
     optimizer.zero_grad()
+    net.zero_grad()
     ce = nn.CrossEntropyLoss()
     _, outputs = net(inputs)
     loss = ce(outputs,labels)
     loss.backward()
     epsilon = 0.02
     x_grad = torch.sign(inputs.grad)
-    # x_adversarial = torch.clamp(inputs.detach()+epsilon*x_grad,-1,1)   
-    # the author said that they didn't clamp 
     x_adversarial = inputs.detach()+epsilon*x_grad
     net.train()
     return x_adversarial
+
+# def where(cond, x, y):
+#     """
+#     code from :
+#         https://discuss.pytorch.org/t/how-can-i-do-the-operation-the-same-as-np-where/1329/8
+#     """
+#     cond = cond.float()
+#     return (cond*x) + ((1-cond)*y)
+
+# i-fgsm
+# def get_adv_example(net, x, y, eps=0.02, alpha=1, iteration=3, x_val_min=-3, x_val_max=3):
+#     net.eval()
+#     x_adv = Variable(x.data, requires_grad=True)
+#     for i in range(iteration):
+#         _, h_adv = net(x_adv)
+#         ce = nn.CrossEntropyLoss()
+#         cost = ce(h_adv, y)
+#         net.zero_grad()
+#         if x_adv.grad is not None:
+#             x_adv.grad.data.fill_(0)
+#         cost.backward()
+
+#         x_adv.grad.sign_()
+#         x_adv = x_adv - alpha*x_adv.grad
+#         x_adv = where(x_adv > x+eps, x+eps, x_adv)
+#         x_adv = where(x_adv < x-eps, x-eps, x_adv)
+#         x_adv = torch.clamp(x_adv, x_val_min, x_val_max)
+#         x_adv = Variable(x_adv.data, requires_grad=True)
+#     net.train()
+#     return x_adv.detach()
+
 
 # labelled data propotion 4000/50000 for cifar 10 
 # unlabelled data propotion 46000/50000 for cifar 10 
@@ -207,16 +265,16 @@ transform = transforms.Compose([
     transforms.RandomAffine(0, translate=(1/16,1/16)), # translation at most two pixels
     transforms.RandomHorizontalFlip(),
     transforms.ToTensor(),
-    transforms.Normalize((0.4914, 0.4822, 0.4465), (0.2023, 0.1994, 0.2010)),
+    transforms.Normalize((0.4914, 0.4822, 0.4465), (0.247, 0.243, 0.261)),
+    # transforms.Normalize((0.4914, 0.4822, 0.4465), (0.2023, 0.1994, 0.2010)),
 ])
 
 
 transform_test = transforms.Compose([
     transforms.ToTensor(),
-    transforms.Normalize((0.4914, 0.4822, 0.4465), (0.2023, 0.1994, 0.2010)),
+    transforms.Normalize((0.4914, 0.4822, 0.4465), (0.247, 0.243, 0.261)),
+    # transforms.Normalize((0.4914, 0.4822, 0.4465), (0.2023, 0.1994, 0.2010)),
 ])
-
-
 
 
 testset = torchvision.datasets.CIFAR10(root='./data', train=False, download=True, transform=transform_test)
@@ -269,15 +327,16 @@ U_loader = torch.utils.data.DataLoader(
         num_workers=2, pin_memory=True)
 
 
-
 step = len(trainset)/batch_size
 net1 = co_train_classifier()
 net2 = co_train_classifier()
+# net1.load_state_dict(torch.load('./checkpoint_no_clamp/co_train_classifier_1_139.pkl'))
+# net2.load_state_dict(torch.load('./checkpoint_no_clamp/co_train_classifier_2_139.pkl'))
 
 net1.cuda()
 net2.cuda()
 params = list(net1.parameters()) + list(net2.parameters())
-# stochastic gradient descent with momentum 0.9 and weight decay0.0001 in paper page 7
+# stochastic gradient descent with momentum = 0.9 and weight decay = 0.0001 in paper page 7
 optimizer = optim.SGD(params, lr=0.05, momentum=0.9, weight_decay=0.0001)
 ce = nn.CrossEntropyLoss() 
 
@@ -308,7 +367,7 @@ def train(epoch):
     S_iter1 = iter(S_loader1)
     S_iter2 = iter(S_loader2)
     U_iter = iter(U_loader)
-    print('epoch:',epoch)
+    print('epoch:', epoch+1)
     while(i < step):
         inputs_S1, labels_S1 = S_iter1.next()
         inputs_S2, labels_S2 = S_iter2.next()
@@ -322,6 +381,7 @@ def train(epoch):
 
         perturbed_data1 = get_adv_example(net1, inputs_S1, labels_S1, optimizer)
         perturbed_data2 = get_adv_example(net2, inputs_S2, labels_S2, optimizer)
+
 
         _, perturbed_logit1 = net1(perturbed_data2)
         _, perturbed_logit2 = net2(perturbed_data1)
@@ -377,17 +437,15 @@ def train(epoch):
         ld += Loss_diff.item()
         # print statistics
         
-        writer.add_scalars('data/loss', {'loss_sup': Loss_sup.item(), 'loss_cot': lamda_cot*Loss_cot.item(), 'loss_diff': lamda_diff*Loss_diff.item()}, (epoch+1)*(i+1))
-        # writer.add_scalars('data/loss', {'loss_sup': Loss_sup.item()}, (epoch+1)*(i+1))
-
-        writer.add_scalars('data/training_accuracy', {'net1 acc': 100. * (train_correct_S1) / (total_S1), 'net2 acc': 100. * (train_correct_S2) / (total_S2)}, (epoch+1)*(i+1))
+        writer.add_scalars('data/loss', {'loss_sup': Loss_sup.item(), 'loss_cot': Loss_cot.item(), 'loss_diff': Loss_diff.item()}, (epoch)*(500)+i)
+        writer.add_scalars('data/training_accuracy', {'net1 acc': 100. * (train_correct_S1) / (total_S1), 'net2 acc': 100. * (train_correct_S2) / (total_S2)}, (epoch)*(500)+i)
         if (i+1)%50 == 0:
-            print('net1 acc: %.3f%% | net2 acc: %.3f%% | total loss: %.3f | loss_sup: %.3f | loss_cot: %.3f | loss_diff: %.3f  '
+            print('net1 training acc: %.3f%% | net2 training acc: %.3f%% | total loss: %.3f | loss_sup: %.3f | loss_cot: %.3f | loss_diff: %.3f  '
                 % (100. * (train_correct_S1+train_correct_U1) / (total_S1+total_U1), 100. * (train_correct_S2+train_correct_U2) / (total_S2+total_U2), running_loss/(i+1), ls/(i+1), lc/(i+1), ld/(i+1)))
             
         i = i + 1
-    torch.save(net1.state_dict(), './checkpoint_no_clamp/co_train_classifier_1_'+str(epoch)+'.pkl')
-    torch.save(net2.state_dict(), './checkpoint_no_clamp/co_train_classifier_2_'+str(epoch)+'.pkl')
+    torch.save(net1.state_dict(), './checkpoint/co_train_classifier_1_'+str(epoch)+'.pkl')
+    torch.save(net2.state_dict(), './checkpoint/co_train_classifier_2_'+str(epoch)+'.pkl')
 
 def test(epoch):
     net1.eval()
@@ -412,27 +470,16 @@ def test(epoch):
             predicted2 = outputs2.max(1)
             total2 += targets.size(0)
             correct2 += predicted2[1].eq(targets).sum().item()
-            
-            progress_bar(batch_idx, len(testloader), '\nnet1 acc: %.3f%% (%d/%d) | net2 acc: %.3f%% (%d/%d)'
-                % (100.*correct1/total1, correct1, total1, 100.*correct2/total2, correct2, total2))
-
+            # progress_bar is not working normally with tmux sessions. 
+            # progress_bar(batch_idx, len(testloader), '\nnet1 acc: %.3f%% (%d/%d) | net2 acc: %.3f%% (%d/%d)'
+            #     % (100.*correct1/total1, correct1, total1, 100.*correct2/total2, correct2, total2))
+    print('\nnet1 test acc: %.3f%% (%d/%d) | net2 test acc: %.3f%% (%d/%d)'
+        % (100.*correct1/total1, correct1, total1, 100.*correct2/total2, correct2, total2))
     writer.add_scalars('data/testing_accuracy', {'net1 acc': 100.*correct1/total1, 'net2 acc': 100.*correct2/total2}, epoch)
-    # Save checkpoint.
-    acc1 = 100.*correct1/total1
-    acc2 = 100.*correct2/total2
+
  
 
-    # if acc1 > best_acc1 or acc2 > best_acc2:
-    #     print('Saving..')
-    #     if not os.path.isdir('checkpoint'):
-    #         os.mkdir('checkpoint')
-    #     torch.save(net1.state_dict(), './checkpoint/co_train_classifier_1.pkl')
-    #     torch.save(net2.state_dict(), './checkpoint/co_train_classifier_2.pkl')
-    #     best_acc1 = acc1
-    #     best_acc2 = acc2
-
-start_epoch = 0
-for epoch in range(start_epoch, 600):
+for epoch in range(start_epoch, end_epoch):
     train(epoch)
     test(epoch)
 

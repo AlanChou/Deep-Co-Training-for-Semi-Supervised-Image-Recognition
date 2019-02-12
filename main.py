@@ -69,8 +69,6 @@ lambda_cot = 0
 lambda_diff = 0
 best_acc = 0.0  
 
-
-
 def adjust_learning_rate(optimizer, epoch):
     """cosine scheduling"""
     epoch = epoch + 1
@@ -90,8 +88,6 @@ def adjust_lamda(epoch):
         lambda_cot = lambda_cot_max
         lambda_diff = lambda_diff_max    
 
-
-
 def jsd(p,q):
     kld = nn.KLDivLoss(reduction='batchmean')
     S = nn.Softmax(dim = 1)
@@ -99,7 +95,7 @@ def jsd(p,q):
     a = S(p)
     b = S(q)
     c = LS(0.5*(p + q))
-    print ((0.5*kld(c,a) + 0.5*kld(c, b)))
+    return ((0.5*kld(c,a) + 0.5*kld(c, b)))
 
 def loss_sup(logit1, logit2, labels_S1, labels_S2):
     # CE, by default, is averaged over each loss element in the batch

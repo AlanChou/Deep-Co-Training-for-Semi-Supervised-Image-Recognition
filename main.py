@@ -82,8 +82,8 @@ def adjust_lamda(epoch):
     global lambda_cot
     global lambda_diff
     if epoch <= args.warm_up:
-        lambda_cot = lambda_cot_max*math.exp(-5*((1-epoch)/args.warm_up)**2)
-        lambda_diff = lambda_diff_max*math.exp(-5*((1-epoch)/args.warm_up)**2)
+        lambda_cot = lambda_cot_max*math.exp(-5*(1-epoch/args.warm_up)**2)
+        lambda_diff = lambda_diff_max*math.exp(-5*(1-epoch/args.warm_up)**2)
     else: 
         lambda_cot = lambda_cot_max
         lambda_diff = lambda_diff_max    

@@ -88,14 +88,29 @@ def adjust_lamda(epoch):
         lambda_cot = lambda_cot_max
         lambda_diff = lambda_diff_max    
 
-def jsd(p,q):
-    kld = nn.KLDivLoss(reduction='batchmean')
+# def jsd(p,q):
+
+#     kld = nn.KLDivLoss(size_average=False)
+#     S = nn.Softmax(dim = 1)
+#     a = S(p)
+#     b = S(q)
+#     c = torch.log(0.5*(S(p) + S(q)))
+#     return ((0.5*kld(c,a) + 0.5*kld(c, b)))/U_batch_size
+
+def jsd(U_p1, U_p2):
+# the Jensen-Shannon divergence between p1(x) and p2(x)
+
     S = nn.Softmax(dim = 1)
     LS = nn.LogSoftmax(dim = 1)
-    a = S(p)
-    b = S(q)
-    c = LS(0.5*(p + q))
-    return ((0.5*kld(c,a) + 0.5*kld(c, b)))
+    a1 = 0.5 * (S(U_p1) + S(U_p2))
+    loss1 = a1 * torch.log(a1)
+    loss1 = -torch.sum(loss1)
+    loss2 = S(U_p1) * LS(U_p1)
+    loss2 = -torch.sum(loss2)
+    loss3 = S(U_p2) * LS(U_p2)
+    loss3 = -torch.sum(loss3)
+
+    return (loss1 - 0.5 * (loss2 + loss3))/U_batch_size
 
 def loss_sup(logit1, logit2, labels_S1, labels_S2):
     # CE, by default, is averaged over each loss element in the batch
@@ -336,8 +351,8 @@ def train(epoch):
         ld += Loss_diff.item()
         # print statistics
         
-        writer.add_scalars('data/loss', {'loss_sup': Loss_sup.item(), 'loss_cot': Loss_cot.item(), 'loss_diff': Loss_diff.item()}, (epoch)*(500)+i)
-        writer.add_scalars('data/training_accuracy', {'net1 acc': 100. * (train_correct_S1) / (total_S1), 'net2 acc': 100. * (train_correct_S2) / (total_S2)}, (epoch)*(500)+i)
+        writer.add_scalars('data/loss', {'loss_sup': Loss_sup.item(), 'loss_cot': Loss_cot.item(), 'loss_diff': Loss_diff.item()}, (epoch)*(step)+i)
+        writer.add_scalars('data/training_accuracy', {'net1 acc': 100. * (train_correct_S1) / (total_S1), 'net2 acc': 100. * (train_correct_S2) / (total_S2)}, (epoch)*(step)+i)
         if (i+1)%50 == 0:
             tqdm.write('net1 training acc: %.3f%% | net2 training acc: %.3f%% | total loss: %.3f | loss_sup: %.3f | loss_cot: %.3f | loss_diff: %.3f  '
                 % (100. * (train_correct_S1+train_correct_U1) / (total_S1+total_U1), 100. * (train_correct_S2+train_correct_U2) / (total_S2+total_U2), running_loss/(i+1), ls/(i+1), lc/(i+1), ld/(i+1)))

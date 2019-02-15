@@ -16,7 +16,7 @@ import argparse
 from tqdm import tqdm
 
 from model import co_train_classifier
-
+from advertorch.attacks import GradientSignAttack
 
 
 parser = argparse.ArgumentParser(description='Deep Co-Training for Semi-Supervised Image Recognition')
@@ -68,7 +68,7 @@ if args.dataset == 'cifar10':
     U_batch_size = int(batch_size * 46./50.) # note that the ratio of labelled/unlabelled data need to be equal to 4000/46000
     S_batch_size = batch_size - U_batch_size
 else:
-    U_batch_size = int(batch_size * 0.99) # note that the ratio of labelled/unlabelled data need to be equal to 4000/46000
+    U_batch_size = int(batch_size * 0.98) # note that the ratio of labelled/unlabelled data need to be equal to 4000/46000
     S_batch_size = batch_size - U_batch_size
 
 lambda_cot_max = args.lambda_cot_max
@@ -112,51 +112,39 @@ def jsd(U_p1, U_p2):
 
     return (loss1 - 0.5 * (loss2 + loss3))/U_batch_size
 
-def loss_sup(logit1, logit2, labels_S1, labels_S2):
+def loss_sup(logit_S1, logit_S2, labels_S1, labels_S2):
     # CE, by default, is averaged over each loss element in the batch
+    # ce = nn.CrossEntropyLoss(reduction="sum") 
+    # loss1 = ce(logit_S1, labels_S1)
+    # loss2 = ce(logit_S2, labels_S2) 
+    # return (loss1+loss2)/S_batch_size
+
     ce = nn.CrossEntropyLoss() 
-    loss1 = ce(logit1, labels_S1)
-    loss2 = ce(logit2, labels_S2) 
-    return loss1+loss2
+    loss1 = ce(logit_S1, labels_S1)
+    loss2 = ce(logit_S2, labels_S2) 
+    return (loss1+loss2)
 
 def loss_cot(logit1, logit2):
 # the Jensen-Shannon divergence between p1(x) and p2(x)
     return jsd(logit1, logit2)
 
-def loss_diff(logit1, logit2, perturbed_logit1, perturbed_logit2, U_logit1, U_logit2, perturbed_logit_U1, perturbed_logit_U2):
+def loss_diff(logit_S1, logit_S2, perturbed_logit_S1, perturbed_logit_S2, logit_U1, logit_U2, perturbed_logit_U1, perturbed_logit_U2):
     S = nn.Softmax(dim = 1)
     LS = nn.LogSoftmax(dim = 1)
     
-    a = S(logit2) * LS(perturbed_logit1)
+    a = S(logit_S2) * LS(perturbed_logit_S1)
     a = torch.sum(a)
 
-    b = S(logit1) * LS(perturbed_logit2)
+    b = S(logit_S1) * LS(perturbed_logit_S2)
     b = torch.sum(b)
 
-    c = S(U_logit2) * LS(perturbed_logit_U1)
+    c = S(logit_U2) * LS(perturbed_logit_U1)
     c = torch.sum(c)
 
-    d = S(U_logit1) * LS(perturbed_logit_U2)
+    d = S(logit_U1) * LS(perturbed_logit_U2)
     d = torch.sum(d)
 
     return -(a+b+c+d)/batch_size
-
-
-def get_adv_example(net, inputs, labels, optimizer):
-    net.eval()
-    inputs.requires_grad=True
-    optimizer.zero_grad()
-    net.zero_grad()
-    ce = nn.CrossEntropyLoss()
-    outputs = net(inputs)
-    loss = ce(outputs,labels)
-    loss.backward()
-    epsilon = args.epsilon
-    x_grad = torch.sign(inputs.grad)
-    x_adversarial = inputs.detach()+epsilon*x_grad
-    net.train()
-    inputs.requires_grad=False
-    return x_adversarial
 
 if args.dataset == 'cifar10':
     transform_train = transforms.Compose([
@@ -209,7 +197,7 @@ if args.resume:
     # Load checkpoint.
     print('==> Resuming from checkpoint..')
     assert os.path.isdir(args.checkpoint_dir), 'Error: no checkpoint directory found!'
-    checkpoint = torch.load('./'+ args.checkpoint_dir + '/ckpt.t7.' +
+    checkpoint = torch.load('./'+ args.checkpoint_dir + '/ckpt.best.' +
                             args.sess + '_' + str(args.seed))
     net1 = checkpoint['net1']
     net2 = checkpoint['net2']
@@ -291,15 +279,15 @@ U_loader = torch.utils.data.DataLoader(
 if args.dataset == 'cifar10':
     step = int(len(trainset)/batch_size)
 else:
-    step = 729
+    step = 500
     
 net1.cuda()
 net2.cuda()
 params = list(net1.parameters()) + list(net2.parameters())
 optimizer = optim.SGD(params, lr=args.base_lr, momentum=args.momentum, weight_decay=args.decay)
-ce = nn.CrossEntropyLoss() 
+# ce = nn.CrossEntropyLoss() 
 
-def checkpoint(epoch):
+def checkpoint(epoch, option):
     # Save checkpoint.
     print('Saving..')
     state = {
@@ -310,9 +298,12 @@ def checkpoint(epoch):
     }
     if not os.path.isdir(args.checkpoint_dir):
         os.mkdir(args.checkpoint_dir)
-    torch.save(state, './'+ args.checkpoint_dir +'/ckpt.t7.' +
-               args.sess + '_' + str(args.seed))
-
+    if(option=='best'):
+        torch.save(state, './'+ args.checkpoint_dir +'/ckpt.best.' +
+                   args.sess + '_' + str(args.seed))
+    else:
+        torch.save(state, './'+ args.checkpoint_dir +'/ckpt.last.' +
+                   args.sess + '_' + str(args.seed))
 
 def train(epoch):
     net1.train()
@@ -351,27 +342,35 @@ def train(epoch):
         labels_S2 = labels_S2.cuda()
         inputs_U = inputs_U.cuda()    
 
-        perturbed_data1 = get_adv_example(net1, inputs_S1, labels_S1, optimizer)
-        perturbed_data2 = get_adv_example(net2, inputs_S2, labels_S2, optimizer)
+
+        logit_S1 = net1(inputs_S1)
+        logit_S2 = net2(inputs_S2)
+        logit_U1 = net1(inputs_U)
+        logit_U2 = net2(inputs_U)
+
+        _, predictions_S1 = torch.max(logit_S1, 1)
+        _, predictions_S2 = torch.max(logit_S2, 1)
+        _, predictions_U1 = torch.max(logit_U1, 1)
+        _, predictions_U2 = torch.max(logit_U2, 1)
 
 
-        perturbed_logit1 = net1(perturbed_data2)
-        perturbed_logit2 = net2(perturbed_data1)
-       
-        S_logit1 = net1(inputs_S1)
-        S_logit2 = net2(inputs_S2)
-        U_logit1 = net1(inputs_U)
-        U_logit2 = net2(inputs_U)
+        adversary1 = GradientSignAttack(
+        net1, loss_fn=nn.CrossEntropyLoss(reduction="sum"), eps=args.epsilon,
+        clip_min=0.0, clip_max=1.0, targeted=False)
 
-        predictions_S1 = torch.max(S_logit1, 1)
-        predictions_S2 = torch.max(S_logit2, 1)
-        predictions_U1 = torch.max(U_logit1, 1)
-        predictions_U2 = torch.max(U_logit2, 1)
-        
-        
-        perturbed_data_U1 = get_adv_example(net1, inputs_U, predictions_U1[1], optimizer)
-        perturbed_data_U2 = get_adv_example(net2, inputs_U, predictions_U2[1], optimizer)
+        adversary2 = GradientSignAttack(
+        net2, loss_fn=nn.CrossEntropyLoss(reduction="sum"), eps=args.epsilon,
+        clip_min=0.0, clip_max=1.0, targeted=False)
 
+        perturbed_data_S1 = adversary1.perturb(inputs_S1, labels_S1)
+        perturbed_data_U1 = adversary1.perturb(inputs_U, predictions_U1)
+
+        perturbed_data_S2 = adversary2.perturb(inputs_S2, labels_S2)
+        perturbed_data_U2 = adversary2.perturb(inputs_U, predictions_U2)
+
+
+        perturbed_logit_S1 = net1(perturbed_data_S2)
+        perturbed_logit_S2 = net2(perturbed_data_S1)
 
         perturbed_logit_U1 = net1(perturbed_data_U2)
         perturbed_logit_U2 = net2(perturbed_data_U1)
@@ -382,25 +381,25 @@ def train(epoch):
         net2.zero_grad()
 
         
-        Loss_sup = loss_sup(S_logit1, S_logit2, labels_S1, labels_S2)
-        Loss_cot = loss_cot(U_logit1, U_logit2)
-        Loss_diff = loss_diff(S_logit1, S_logit2, perturbed_logit1, perturbed_logit2, U_logit1, U_logit2, perturbed_logit_U1, perturbed_logit_U2)
+        Loss_sup = loss_sup(logit_S1, logit_S2, labels_S1, labels_S2)
+        Loss_cot = loss_cot(logit_U1, logit_U2)
+        Loss_diff = loss_diff(logit_S1, logit_S2, perturbed_logit_S1, perturbed_logit_S2, logit_U1, logit_U2, perturbed_logit_U1, perturbed_logit_U2)
         
         total_loss = Loss_sup + lambda_cot*Loss_cot + lambda_diff*Loss_diff
         total_loss.backward()
         optimizer.step()
 
 
-        train_correct_S1 += np.sum(predictions_S1[1].cpu().numpy() == labels_S1.cpu().numpy())
+        train_correct_S1 += np.sum(predictions_S1.cpu().numpy() == labels_S1.cpu().numpy())
         total_S1 += labels_S1.size(0)
 
-        train_correct_U1 += np.sum(predictions_U1[1].cpu().numpy() == labels_U.cpu().numpy())
+        train_correct_U1 += np.sum(predictions_U1.cpu().numpy() == labels_U.cpu().numpy())
         total_U1 += labels_U.size(0)
 
-        train_correct_S2 += np.sum(predictions_S2[1].cpu().numpy() == labels_S2.cpu().numpy())
+        train_correct_S2 += np.sum(predictions_S2.cpu().numpy() == labels_S2.cpu().numpy())
         total_S2 += labels_S2.size(0)
 
-        train_correct_U2 += np.sum(predictions_U2[1].cpu().numpy() == labels_U.cpu().numpy())
+        train_correct_U2 += np.sum(predictions_U2.cpu().numpy() == labels_U.cpu().numpy())
         total_U2 += labels_U.size(0)
         
         running_loss += total_loss.item()
@@ -446,11 +445,12 @@ def test(epoch):
     acc = ((100.*correct1/total1)+(100.*correct2/total2))/2
     if acc > best_acc:
         best_acc = acc
-        checkpoint(epoch)
+        checkpoint(epoch, 'best')
 
 for epoch in range(start_epoch, end_epoch):
     train(epoch)
     test(epoch)
+    checkpoint(epoch, 'last')
 
 writer.export_scalars_to_json('./'+ args.tensorboard_dir + 'output.json')
 writer.close()

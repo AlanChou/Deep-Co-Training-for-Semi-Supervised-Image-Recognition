@@ -26,16 +26,18 @@ parser.add_argument('--lambda_cot_max', default=10, type=int)
 parser.add_argument('--lambda_diff_max', default=0.5, type=float)
 parser.add_argument('--seed', default=1234, type=int)
 parser.add_argument('--epochs', default=600, type=int)
-parser.add_argument('--warm_up', default=80, type=int)
+parser.add_argument('--warm_up', default=80.0, type=float)
 parser.add_argument('--momentum', default=0.9, type=float)
 parser.add_argument('--decay', default=1e-4, type=float)
 parser.add_argument('--epsilon', default=0.02, type=float)
 parser.add_argument('--num_class', default=10, type=int)
 parser.add_argument('--cifar10_dir', default='./data', type=str)
+parser.add_argument('--svhn_dir', default='./data', type=str)
 parser.add_argument('--tensorboard_dir', default='tensorboard/', type=str)
 parser.add_argument('--checkpoint_dir', default='checkpoint', type=str)
 parser.add_argument('--base_lr', default=0.05, type=float)
 parser.add_argument('--resume', '-r', action='store_true', help='resume from checkpoint')
+parser.add_argument('--dataset', default='cifar10', type=str, help='choose svhn or cifar10')
 args = parser.parse_args()
 
 
@@ -61,12 +63,18 @@ start_epoch = 0
 end_epoch = args.epochs
 class_num = args.num_class 
 batch_size = args.batchsize
-U_batch_size = int(batch_size * 46./50.) # note that the ratio of labelled/unlabelled data need to be equal to 4000/46000
-S_batch_size = batch_size - U_batch_size
+
+if args.dataset == 'cifar10':
+    U_batch_size = int(batch_size * 46./50.) # note that the ratio of labelled/unlabelled data need to be equal to 4000/46000
+    S_batch_size = batch_size - U_batch_size
+else:
+    U_batch_size = int(batch_size * 0.99) # note that the ratio of labelled/unlabelled data need to be equal to 4000/46000
+    S_batch_size = batch_size - U_batch_size
+
 lambda_cot_max = args.lambda_cot_max
 lambda_diff_max = args.lambda_diff_max
-lambda_cot = 0
-lambda_diff = 0
+lambda_cot = 0.0
+lambda_diff = 0.0
 best_acc = 0.0  
 
 def adjust_learning_rate(optimizer, epoch):
@@ -88,14 +96,6 @@ def adjust_lamda(epoch):
         lambda_cot = lambda_cot_max
         lambda_diff = lambda_diff_max    
 
-# def jsd(p,q):
-
-#     kld = nn.KLDivLoss(size_average=False)
-#     S = nn.Softmax(dim = 1)
-#     a = S(p)
-#     b = S(q)
-#     c = torch.log(0.5*(S(p) + S(q)))
-#     return ((0.5*kld(c,a) + 0.5*kld(c, b)))/U_batch_size
 
 def jsd(U_p1, U_p2):
 # the Jensen-Shannon divergence between p1(x) and p2(x)
@@ -144,7 +144,7 @@ def loss_diff(logit1, logit2, perturbed_logit1, perturbed_logit2, U_logit1, U_lo
 
 def get_adv_example(net, inputs, labels, optimizer):
     net.eval()
-    inputs.requires_grad_()
+    inputs.requires_grad=True
     optimizer.zero_grad()
     net.zero_grad()
     ce = nn.CrossEntropyLoss()
@@ -155,54 +155,125 @@ def get_adv_example(net, inputs, labels, optimizer):
     x_grad = torch.sign(inputs.grad)
     x_adversarial = inputs.detach()+epsilon*x_grad
     net.train()
+    inputs.requires_grad=False
     return x_adversarial
 
-# labelled data propotion 4000/50000 for cifar 10 
-# unlabelled data propotion 46000/50000 for cifar 10 
-# standard data augmentation on cifar10
-transform_train = transforms.Compose([
-    transforms.RandomAffine(0, translate=(1/16,1/16)), # translation at most two pixels
-    transforms.RandomHorizontalFlip(),
-    transforms.ToTensor(),
-    transforms.Normalize((0.4914, 0.4822, 0.4465), (0.247, 0.243, 0.261)),
-])
+if args.dataset == 'cifar10':
+    transform_train = transforms.Compose([
+        transforms.RandomAffine(0, translate=(1/16,1/16)), # translation at most two pixels
+        transforms.RandomHorizontalFlip(),
+        transforms.ToTensor(),
+        # transforms.Normalize((0.4914, 0.4822, 0.4465), (0.247, 0.243, 0.261)),
+    ])
 
-transform_test = transforms.Compose([
-    transforms.ToTensor(),
-    transforms.Normalize((0.4914, 0.4822, 0.4465), (0.247, 0.243, 0.261)),
-])
+    transform_test = transforms.Compose([
+        transforms.ToTensor(),
+        # transforms.Normalize((0.4914, 0.4822, 0.4465), (0.247, 0.243, 0.261)),
+    ])
 
-testset = torchvision.datasets.CIFAR10(root=args.cifar10_dir, train=False, download=True, transform=transform_test)
-testloader = torch.utils.data.DataLoader(testset, batch_size=batch_size, shuffle=True, num_workers=2)
+    testset = torchvision.datasets.CIFAR10(root=args.cifar10_dir, train=False, download=True, transform=transform_test)
+    testloader = torch.utils.data.DataLoader(testset, batch_size=batch_size, shuffle=True, num_workers=2)
 
-trainset = torchvision.datasets.CIFAR10(root=args.cifar10_dir, train=True, download=True, transform=transform_train)
-trainloader = torch.utils.data.DataLoader(trainset, batch_size=1, shuffle=False, num_workers=2)
+    trainset = torchvision.datasets.CIFAR10(root=args.cifar10_dir, train=True, download=True, transform=transform_train)
+    trainloader = torch.utils.data.DataLoader(trainset, batch_size=1, shuffle=False, num_workers=2)
+
+elif args.dataset == 'svhn':
+    transform_train = transforms.Compose([
+        transforms.RandomAffine(0, translate=(1/16,1/16)), # translation at most two pixels
+        # transforms.RandomHorizontalFlip(),
+        transforms.ToTensor(),
+        # transforms.Normalize((0.4914, 0.4822, 0.4465), (0.247, 0.243, 0.261)),
+    ])
+
+    transform_test = transforms.Compose([
+        transforms.ToTensor(),
+        # transforms.Normalize((0.4914, 0.4822, 0.4465), (0.247, 0.243, 0.261)),
+    ])
+
+    testset = torchvision.datasets.SVHN(root=args.svhn_dir, download=True, transform=transform_test, split='test')
+    testloader = torch.utils.data.DataLoader(testset, batch_size=batch_size, shuffle=True, num_workers=2)
+
+    trainset = torchvision.datasets.SVHN(root=args.svhn_dir, download=True, transform=transform_train, split='train')
+    trainloader = torch.utils.data.DataLoader(trainset, batch_size=1, shuffle=False, num_workers=2)    
+
+else:
+    raise ValueError('no such dataset')
 
 S_idx = []
 U_idx = []
 dataiter = iter(trainloader)
 train = [[],[],[],[],[],[],[],[],[],[]]
 
-for i in range(len(trainset)):
-    inputs, labels = dataiter.next()
-    train[labels].append(i)
+# Model
+if args.resume:
+    # Load checkpoint.
+    print('==> Resuming from checkpoint..')
+    assert os.path.isdir(args.checkpoint_dir), 'Error: no checkpoint directory found!'
+    checkpoint = torch.load('./'+ args.checkpoint_dir + '/ckpt.t7.' +
+                            args.sess + '_' + str(args.seed))
+    net1 = checkpoint['net1']
+    net2 = checkpoint['net2']
+    start_epoch = checkpoint['epoch'] + 1
+    torch.set_rng_state(checkpoint['rng_state'])
 
-for i in range(class_num):
-    shuffle(train[i])
-    S_idx = S_idx + train[i][0:400]
-    U_idx = U_idx + train[i][400:]
+    if args.dataset == 'cifar10':
+        with open("cifar10_labelled_index.txt","rb") as fp:
+            S_idx = pickle.dump(fp)
 
-#save the indexes in case we need the exact ones for comparison
-with open("labelled_index.txt","wb") as fp:
-    pickle.dump(S_idx,fp)
+        with open("cifar10_unlabelled_index.txt","rb") as fp:
+            U_idx = pickle.dump(fp)
+    else:
+        with open("svhn_labelled_index.txt","rb") as fp:
+            S_idx = pickle.dump(fp)
 
-with open("unlabelled_index.txt","wb") as fp:
-    pickle.dump(U_idx,fp)
+        with open("svhm_unlabelled_index.txt","rb") as fp:
+            U_idx = pickle.dump(fp)
+else:
+
+
+    print('Building model..')
+    start_epoch = 0
+    net1 = co_train_classifier()
+    net2 = co_train_classifier()
+
+    if args.dataset == 'cifar10':
+        for i in range(len(trainset)):
+            inputs, labels = dataiter.next()
+            train[labels].append(i)
+
+        for i in range(class_num):
+            shuffle(train[i])
+            S_idx = S_idx + train[i][0:400]
+            U_idx = U_idx + train[i][400:]
+
+        #save the indexes in case we need the exact ones for comparison
+        with open("cifar10_labelled_index.txt","wb") as fp:
+            pickle.dump(S_idx,fp)
+
+        with open("cifar10_unlabelled_index.txt","wb") as fp:
+            pickle.dump(U_idx,fp)
+
+    else:
+        for i in range(len(trainset)):
+            inputs, labels = dataiter.next()
+            train[labels].append(i)
+
+        for i in range(class_num):
+            shuffle(train[i])
+            S_idx = S_idx + train[i][0:100]
+            U_idx = U_idx + train[i][100:]
+
+        #save the indexes in case we need the exact ones for comparison
+        with open("svhn_labelled_index.txt","wb") as fp:
+            pickle.dump(S_idx,fp)
+
+        with open("svhn_unlabelled_index.txt","wb") as fp:
+            pickle.dump(U_idx,fp)
+
+
 
 S_sampler = torch.utils.data.SubsetRandomSampler(S_idx)
 U_sampler = torch.utils.data.SubsetRandomSampler(U_idx)
-
-
 
 S_loader1 = torch.utils.data.DataLoader(
         trainset, batch_size=S_batch_size, sampler=S_sampler,
@@ -217,25 +288,11 @@ U_loader = torch.utils.data.DataLoader(
         num_workers=2, pin_memory=True)
 
 
-step = int(len(trainset)/batch_size)
-
-# Model
-if args.resume:
-    # Load checkpoint.
-    print('==> Resuming from checkpoint..')
-    assert os.path.isdir(args.checkpoint_dir), 'Error: no checkpoint directory found!'
-    checkpoint = torch.load('./'+ args.checkpoint_dir + '/ckpt.t7.' +
-                            args.sess + '_' + str(args.seed))
-    net1 = checkpoint['net1']
-    net2 = checkpoint['net2']
-    start_epoch = checkpoint['epoch'] + 1
-    torch.set_rng_state(checkpoint['rng_state'])
+if args.dataset == 'cifar10':
+    step = int(len(trainset)/batch_size)
 else:
-    print('Building model..')
-    start_epoch = 0
-    net1 = co_train_classifier()
-    net2 = co_train_classifier()
-
+    step = 729
+    
 net1.cuda()
 net2.cuda()
 params = list(net1.parameters()) + list(net2.parameters())
@@ -282,6 +339,7 @@ def train(epoch):
     S_iter2 = iter(S_loader2)
     U_iter = iter(U_loader)
     print('epoch:', epoch+1)
+    # for i, (inputs, targets) in enumerate(zip(S_loader1, S_loader2, U_loader):
     for i in tqdm(range(step)):
         inputs_S1, labels_S1 = S_iter1.next()
         inputs_S2, labels_S2 = S_iter2.next()

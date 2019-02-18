@@ -179,6 +179,9 @@ U_idx = []
 dataiter = iter(trainloader)
 train = [[],[],[],[],[],[],[],[],[],[]]
 
+
+
+
 # Model
 if args.resume:
     # Load checkpoint.
@@ -205,7 +208,7 @@ if args.resume:
             U_idx = pickle.load(fp)
 else:
 
-
+    #Build the model and get the index of S and U
     print('Building model..')
     start_epoch = 0
     net1 = co_train_classifier()
@@ -221,7 +224,7 @@ else:
             S_idx = S_idx + train[i][0:400]
             U_idx = U_idx + train[i][400:]
 
-        #save the indexes in case we need the exact ones for comparison
+        #save the indexes in case we need the exact ones to resume
         with open("cifar10_labelled_index.txt","wb") as fp:
             pickle.dump(S_idx,fp)
 
@@ -238,7 +241,7 @@ else:
             S_idx = S_idx + train[i][0:100]
             U_idx = U_idx + train[i][100:]
 
-        #save the indexes in case we need the exact ones for comparison
+        #save the indexes in case we need the exact ones to resume
         with open("svhn_labelled_index.txt","wb") as fp:
             pickle.dump(S_idx,fp)
 
@@ -265,6 +268,7 @@ U_loader = torch.utils.data.DataLoader(
 
 if args.dataset == 'cifar10':
     step = int(len(trainset)/batch_size)
+# for SVHN, not implemented yet
 else:
     step = 1000
     
@@ -336,18 +340,22 @@ def train(epoch):
 
         _, predictions_S1 = torch.max(logit_S1, 1)
         _, predictions_S2 = torch.max(logit_S2, 1)
+
+        # pseudo labels of U 
         _, predictions_U1 = torch.max(logit_U1, 1)
         _, predictions_U2 = torch.max(logit_U2, 1)
 
-
+        #net1 adversary object
         adversary1 = GradientSignAttack(
         net1, loss_fn=nn.CrossEntropyLoss(reduction="sum"), eps=args.epsilon,
         clip_min=0.0, clip_max=1.0, targeted=False)
 
+        #net2 adversary object
         adversary2 = GradientSignAttack(
         net2, loss_fn=nn.CrossEntropyLoss(reduction="sum"), eps=args.epsilon,
         clip_min=0.0, clip_max=1.0, targeted=False)
 
+        #generate adversarial examples
         perturbed_data_S1 = adversary1.perturb(inputs_S1, labels_S1)
         perturbed_data_U1 = adversary1.perturb(inputs_U, predictions_U1)
 
@@ -392,11 +400,12 @@ def train(epoch):
         ls += Loss_sup.item()
         lc += Loss_cot.item()
         ld += Loss_diff.item()
-        # print statistics
         
+        # using tensorboard to monitor loss and acc
         writer.add_scalars('data/loss', {'loss_sup': Loss_sup.item(), 'loss_cot': Loss_cot.item(), 'loss_diff': Loss_diff.item()}, (epoch)*(step)+i)
         writer.add_scalars('data/training_accuracy', {'net1 acc': 100. * (train_correct_S1) / (total_S1), 'net2 acc': 100. * (train_correct_S2) / (total_S2)}, (epoch)*(step)+i)
         if (i+1)%50 == 0:
+            # print statistics
             tqdm.write('net1 training acc: %.3f%% | net2 training acc: %.3f%% | total loss: %.3f | loss_sup: %.3f | loss_cot: %.3f | loss_diff: %.3f  '
                 % (100. * (train_correct_S1+train_correct_U1) / (total_S1+total_U1), 100. * (train_correct_S2+train_correct_U2) / (total_S2+total_U2), running_loss/(i+1), ls/(i+1), lc/(i+1), ld/(i+1)))
 

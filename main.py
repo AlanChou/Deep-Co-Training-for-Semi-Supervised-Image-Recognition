@@ -101,7 +101,7 @@ def loss_sup(logit_S1, logit_S2, labels_S1, labels_S2):
     loss2 = ce(logit_S2, labels_S2) 
     return (loss1+loss2)
 
-def loss_cot(logit1, logit2):
+def loss_cot(U_p1, U_p2):
 # the Jensen-Shannon divergence between p1(x) and p2(x)
     S = nn.Softmax(dim = 1)
     LS = nn.LogSoftmax(dim = 1)
@@ -114,6 +114,7 @@ def loss_cot(logit1, logit2):
     loss3 = -torch.sum(loss3)
 
     return (loss1 - 0.5 * (loss2 + loss3))/U_batch_size
+
 
 def loss_diff(logit_S1, logit_S2, perturbed_logit_S1, perturbed_logit_S2, logit_U1, logit_U2, perturbed_logit_U1, perturbed_logit_U2):
     S = nn.Softmax(dim = 1)

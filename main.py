@@ -38,7 +38,7 @@ parser.add_argument('--checkpoint_dir', default='checkpoint', type=str)
 parser.add_argument('--base_lr', default=0.05, type=float)
 parser.add_argument('--resume', '-r', action='store_true', help='resume from checkpoint')
 parser.add_argument('--dataset', default='cifar10', type=str, help='choose svhn or cifar10')
-args = parser.parse_args()
+# parser.add_argument('--samples_per_class', default=400)
 
 
 # main
@@ -68,7 +68,7 @@ if args.dataset == 'cifar10':
     U_batch_size = int(batch_size * 46./50.) # note that the ratio of labelled/unlabelled data need to be equal to 4000/46000
     S_batch_size = batch_size - U_batch_size
 else:
-    U_batch_size = int(batch_size * 0.98) # note that the ratio of labelled/unlabelled data need to be equal to 4000/46000
+    U_batch_size = int(batch_size * 72/73) # note that the ratio of labelled/unlabelled data need to be equal to 4000/46000
     S_batch_size = batch_size - U_batch_size
 
 lambda_cot_max = args.lambda_cot_max
@@ -94,12 +94,16 @@ def adjust_lamda(epoch):
         lambda_diff = lambda_diff_max*math.exp(-5*(1-epoch/args.warm_up)**2)
     else: 
         lambda_cot = lambda_cot_max
-        lambda_diff = lambda_diff_max    
+        lambda_diff = lambda_diff_max   
 
+def loss_sup(logit_S1, logit_S2, labels_S1, labels_S2):
+    ce = nn.CrossEntropyLoss() 
+    loss1 = ce(logit_S1, labels_S1)
+    loss2 = ce(logit_S2, labels_S2) 
+    return (loss1+loss2)
 
-def jsd(U_p1, U_p2):
+def loss_cot(logit1, logit2):
 # the Jensen-Shannon divergence between p1(x) and p2(x)
-
     S = nn.Softmax(dim = 1)
     LS = nn.LogSoftmax(dim = 1)
     a1 = 0.5 * (S(U_p1) + S(U_p2))
@@ -111,22 +115,6 @@ def jsd(U_p1, U_p2):
     loss3 = -torch.sum(loss3)
 
     return (loss1 - 0.5 * (loss2 + loss3))/U_batch_size
-
-def loss_sup(logit_S1, logit_S2, labels_S1, labels_S2):
-    # CE, by default, is averaged over each loss element in the batch
-    # ce = nn.CrossEntropyLoss(reduction="sum") 
-    # loss1 = ce(logit_S1, labels_S1)
-    # loss2 = ce(logit_S2, labels_S2) 
-    # return (loss1+loss2)/S_batch_size
-
-    ce = nn.CrossEntropyLoss() 
-    loss1 = ce(logit_S1, labels_S1)
-    loss2 = ce(logit_S2, labels_S2) 
-    return (loss1+loss2)
-
-def loss_cot(logit1, logit2):
-# the Jensen-Shannon divergence between p1(x) and p2(x)
-    return jsd(logit1, logit2)
 
 def loss_diff(logit_S1, logit_S2, perturbed_logit_S1, perturbed_logit_S2, logit_U1, logit_U2, perturbed_logit_U1, perturbed_logit_U2):
     S = nn.Softmax(dim = 1)
@@ -168,14 +156,13 @@ if args.dataset == 'cifar10':
 elif args.dataset == 'svhn':
     transform_train = transforms.Compose([
         transforms.RandomAffine(0, translate=(1/16,1/16)), # translation at most two pixels
-        # transforms.RandomHorizontalFlip(),
         transforms.ToTensor(),
-        # transforms.Normalize((0.4914, 0.4822, 0.4465), (0.247, 0.243, 0.261)),
+        # transforms.Normalize((0.5, 0.5, 0.5), (0.5, 0.5, 0.5)),
     ])
 
     transform_test = transforms.Compose([
         transforms.ToTensor(),
-        # transforms.Normalize((0.4914, 0.4822, 0.4465), (0.247, 0.243, 0.261)),
+        # transforms.Normalize((0.5, 0.5, 0.5), (0.5, 0.5, 0.5)),
     ])
 
     testset = torchvision.datasets.SVHN(root=args.svhn_dir, download=True, transform=transform_test, split='test')
@@ -206,16 +193,16 @@ if args.resume:
 
     if args.dataset == 'cifar10':
         with open("cifar10_labelled_index.txt","rb") as fp:
-            S_idx = pickle.dump(fp)
+            S_idx = pickle.load(fp)
 
         with open("cifar10_unlabelled_index.txt","rb") as fp:
-            U_idx = pickle.dump(fp)
+            U_idx = pickle.load(fp)
     else:
         with open("svhn_labelled_index.txt","rb") as fp:
-            S_idx = pickle.dump(fp)
+            S_idx = pickle.load(fp)
 
         with open("svhm_unlabelled_index.txt","rb") as fp:
-            U_idx = pickle.dump(fp)
+            U_idx = pickle.load(fp)
 else:
 
 
@@ -279,13 +266,12 @@ U_loader = torch.utils.data.DataLoader(
 if args.dataset == 'cifar10':
     step = int(len(trainset)/batch_size)
 else:
-    step = 500
+    step = 1000
     
 net1.cuda()
 net2.cuda()
 params = list(net1.parameters()) + list(net2.parameters())
 optimizer = optim.SGD(params, lr=args.base_lr, momentum=args.momentum, weight_decay=args.decay)
-# ce = nn.CrossEntropyLoss() 
 
 def checkpoint(epoch, option):
     # Save checkpoint.

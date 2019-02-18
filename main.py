@@ -38,8 +38,7 @@ parser.add_argument('--checkpoint_dir', default='checkpoint', type=str)
 parser.add_argument('--base_lr', default=0.05, type=float)
 parser.add_argument('--resume', '-r', action='store_true', help='resume from checkpoint')
 parser.add_argument('--dataset', default='cifar10', type=str, help='choose svhn or cifar10')
-# parser.add_argument('--samples_per_class', default=400)
-
+args = parser.parse_args()
 
 # main
 # for reproducibility
@@ -68,7 +67,7 @@ if args.dataset == 'cifar10':
     U_batch_size = int(batch_size * 46./50.) # note that the ratio of labelled/unlabelled data need to be equal to 4000/46000
     S_batch_size = batch_size - U_batch_size
 else:
-    U_batch_size = int(batch_size * 72/73) # note that the ratio of labelled/unlabelled data need to be equal to 4000/46000
+    U_batch_size = int(batch_size * 72/73) # note that the ratio of labelled/unlabelled data need to be equal to 1000/72257
     S_batch_size = batch_size - U_batch_size
 
 lambda_cot_max = args.lambda_cot_max

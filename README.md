@@ -14,8 +14,7 @@ All hyperparameters are set the same as they are mentioned in the paper. There a
 
 It can achieve 88.345% accuracy (net1 test acc: 88.370% (8837/10000) | net2 test acc: 88.420%) with a single 2080ti GPU in 600 epochs (each epoch takes around 2 minutes), which is still far from the reported baseline in the paper (90.93%). Please feel free to correct our implementation if there's anything wrong.
 
-
-
+![image](https://github.com/AlanChou/Deep-Co-Training-for-Semi-Supervised-Image-Recognition/blob/master/Test.PNG) 
 ## Dependencies
 This code is based on Python 3.5, with the main dependencies being PyTorch==0.4.1. Additional dependencies for running experiments are: numpy, Pickle, tqdm, math, argparse, os, random, tensorboardX, advertorch.
 

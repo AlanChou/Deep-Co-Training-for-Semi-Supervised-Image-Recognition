@@ -1,6 +1,6 @@
 # Deep Co-Training for Semi-Supervised Image Recognition
 
-This is the unofficial PyTorch implementation of the paper "Deep Co-Training for Semi-Supervised Image Recognition" in ECCV 2018. 
+This is the unofficial PyTorch implementation of the paper "Deep Co-Training for Semi-Supervised Image Recognition" in ECCV 2018.<br> 
 http://openaccess.thecvf.com/content_ECCV_2018/papers/Siyuan_Qiao_Deep_Co-Training_for_ECCV_2018_paper.pdf
 
 It only contains the code for 2-view co-training on CIFAR-10. 
@@ -19,8 +19,9 @@ It can achieve 89.1% accuracy (net1 test acc: 89.14% | net2 test acc: 89.06%) wi
 This code is based on Python 3.5, with the main dependencies being PyTorch==0.4.1. Additional dependencies for running experiments are: numpy, Pickle, tqdm, math, argparse, os, random, tensorboardX, advertorch.
 
 Advertorch can be installed from https://github.com/BorealisAI/advertorch<br>
+Run the code with the command:<br>
 ```
-Run the code with command $ CUDA_VISIBLE_DEVICES=0 python3 main.py 
+$ CUDA_VISIBLE_DEVICES=0 python3 main.py 
 ```
 Multi-GPU is not supported with this code.
 

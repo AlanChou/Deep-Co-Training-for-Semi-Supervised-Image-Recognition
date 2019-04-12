@@ -18,7 +18,9 @@ It can achieve 89.1% accuracy (net1 test acc: 89.14% | net2 test acc: 89.06%) wi
 ## Dependencies
 This code is based on Python 3.5, with the main dependencies being PyTorch==0.4.1. Additional dependencies for running experiments are: numpy, Pickle, tqdm, math, argparse, os, random, tensorboardX, advertorch.
 
-Advertorch can be installed from https://github.com/BorealisAI/advertorch  
+Advertorch can be installed from https://github.com/BorealisAI/advertorch<br>
+```
 Run the code with command $ CUDA_VISIBLE_DEVICES=0 python3 main.py 
+```
 Multi-GPU is not supported with this code.
 

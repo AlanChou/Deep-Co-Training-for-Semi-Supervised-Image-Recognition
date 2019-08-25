@@ -8,13 +8,13 @@ import numpy as np
 import torch.optim as optim
 import os
 import math
+import pickle
+import argparse
+import random
 from torch.autograd import Variable
 from tensorboardX import SummaryWriter 
 from random import shuffle
-import pickle
-import argparse
 from tqdm import tqdm
-
 from model import co_train_classifier
 from advertorch.attacks import GradientSignAttack
 
@@ -37,25 +37,26 @@ parser.add_argument('--tensorboard_dir', default='tensorboard/', type=str)
 parser.add_argument('--checkpoint_dir', default='checkpoint', type=str)
 parser.add_argument('--base_lr', default=0.05, type=float)
 parser.add_argument('--resume', '-r', action='store_true', help='resume from checkpoint')
-parser.add_argument('--dataset', default='cifar10', type=str, help='choose svhn or cifar10')
+parser.add_argument('--dataset', default='cifar10', type=str, help='choose svhn or cifar10, svhn is not implemented yey')
 args = parser.parse_args()
 
-# main
-# for reproducibility
-torch.backends.cudnn.enabled = True
-torch.backends.cudnn.benchmark = True
 
+# for reproducibility
 seed = args.seed
+random.seed(seed)
 torch.manual_seed(seed)
-torch.cuda.manual_seed(seed)
+torch.cuda.manual_seed_all(seed)
 np.random.seed(seed)
+torch.backends.cudnn.deterministic=True
+torch.backends.cudnn.benchmark = False
+
 
 np.set_printoptions(precision=4)
 torch.set_printoptions(precision=4)
 
 
 if not os.path.isdir(args.tensorboard_dir):
-        os.mkdir(args.tensorboard_dir)
+    os.mkdir(args.tensorboard_dir)
 
 writer = SummaryWriter(args.tensorboard_dir)
 start_epoch = 0
@@ -148,10 +149,10 @@ if args.dataset == 'cifar10':
     ])
 
     testset = torchvision.datasets.CIFAR10(root=args.cifar10_dir, train=False, download=True, transform=transform_test)
-    testloader = torch.utils.data.DataLoader(testset, batch_size=batch_size, shuffle=True, num_workers=2)
+    testloader = torch.utils.data.DataLoader(testset, batch_size=batch_size, shuffle=False)
 
     trainset = torchvision.datasets.CIFAR10(root=args.cifar10_dir, train=True, download=True, transform=transform_train)
-    trainloader = torch.utils.data.DataLoader(trainset, batch_size=1, shuffle=False, num_workers=2)
+    trainloader = torch.utils.data.DataLoader(trainset, batch_size=1, shuffle=False)
 
 elif args.dataset == 'svhn':
     transform_train = transforms.Compose([
@@ -177,9 +178,7 @@ else:
 S_idx = []
 U_idx = []
 dataiter = iter(trainloader)
-train = [[],[],[],[],[],[],[],[],[],[]]
-
-
+train = [[] for x in range(args.num_class)]
 
 
 # Model
@@ -187,24 +186,28 @@ if args.resume:
     # Load checkpoint.
     print('==> Resuming from checkpoint..')
     assert os.path.isdir(args.checkpoint_dir), 'Error: no checkpoint directory found!'
-    checkpoint = torch.load('./'+ args.checkpoint_dir + '/ckpt.best.' +
-                            args.sess + '_' + str(args.seed))
+    
+    checkpoint = torch.load('./'+ args.checkpoint_dir + '/ckpt.best.' + args.sess + '_' + str(args.seed))
+    
     net1 = checkpoint['net1']
     net2 = checkpoint['net2']
     start_epoch = checkpoint['epoch'] + 1
     torch.set_rng_state(checkpoint['rng_state'])
-
+    torch.cuda.set_rng_state(checkpoint['cuda_rng_state'])
+    np.random.set_state(checkpoint['np_state'])
+    random.setstate(checkpoint['random_state'])
+    
     if args.dataset == 'cifar10':
-        with open("cifar10_labelled_index.txt","rb") as fp:
+        with open("cifar10_labelled_index.pkl", "rb") as fp:
             S_idx = pickle.load(fp)
 
-        with open("cifar10_unlabelled_index.txt","rb") as fp:
+        with open("cifar10_unlabelled_index.pkl", "rb") as fp:
             U_idx = pickle.load(fp)
     else:
-        with open("svhn_labelled_index.txt","rb") as fp:
+        with open("svhn_labelled_index.pkl", "rb") as fp:
             S_idx = pickle.load(fp)
 
-        with open("svhm_unlabelled_index.txt","rb") as fp:
+        with open("svhn_unlabelled_index.pkl", "rb") as fp:
             U_idx = pickle.load(fp)
 else:
 
@@ -225,10 +228,10 @@ else:
             U_idx = U_idx + train[i][400:]
 
         #save the indexes in case we need the exact ones to resume
-        with open("cifar10_labelled_index.txt","wb") as fp:
+        with open("cifar10_labelled_index.pkl","wb") as fp:
             pickle.dump(S_idx,fp)
 
-        with open("cifar10_unlabelled_index.txt","wb") as fp:
+        with open("cifar10_unlabelled_index.pkl","wb") as fp:
             pickle.dump(U_idx,fp)
 
     else:
@@ -242,28 +245,29 @@ else:
             U_idx = U_idx + train[i][100:]
 
         #save the indexes in case we need the exact ones to resume
-        with open("svhn_labelled_index.txt","wb") as fp:
-            pickle.dump(S_idx,fp)
+        with open("svhn_labelled_index.pkl","wb") as fp:
+            pickle.dump(S_idx, fp)
 
-        with open("svhn_unlabelled_index.txt","wb") as fp:
-            pickle.dump(U_idx,fp)
+        with open("svhn_unlabelled_index.pkl","wb") as fp:
+            pickle.dump(U_idx, fp)
 
 
 
 S_sampler = torch.utils.data.SubsetRandomSampler(S_idx)
 U_sampler = torch.utils.data.SubsetRandomSampler(U_idx)
 
-S_loader1 = torch.utils.data.DataLoader(
-        trainset, batch_size=S_batch_size, sampler=S_sampler,
-        num_workers=2, pin_memory=True)
+S_loader1 = torch.utils.data.DataLoader(trainset, batch_size=S_batch_size, sampler=S_sampler)
+S_loader2 = torch.utils.data.DataLoader(trainset, batch_size=S_batch_size, sampler=S_sampler)
+U_loader = torch.utils.data.DataLoader(trainset, batch_size=U_batch_size, sampler=U_sampler)
 
-S_loader2 = torch.utils.data.DataLoader(
-        trainset, batch_size=S_batch_size, sampler=S_sampler,
-        num_workers=2, pin_memory=True)
+#net1 adversary object
+adversary1 = GradientSignAttack(
+net1, loss_fn=nn.CrossEntropyLoss(reduction="sum"), eps=args.epsilon, clip_min=-math.inf, clip_max=math.inf, targeted=False)
 
-U_loader = torch.utils.data.DataLoader(
-        trainset, batch_size=U_batch_size, sampler=U_sampler,
-        num_workers=2, pin_memory=True)
+#net2 adversary object
+adversary2 = GradientSignAttack(
+net2, loss_fn=nn.CrossEntropyLoss(reduction="sum"), eps=args.epsilon, clip_min=-math.inf, clip_max=math.inf, targeted=False)
+
 
 
 if args.dataset == 'cifar10':
@@ -271,9 +275,16 @@ if args.dataset == 'cifar10':
 # for SVHN, not implemented yet
 else:
     step = 1000
+
     
+  
 net1.cuda()
 net2.cuda()
+net1 = torch.nn.DataParallel(net1)
+net2 = torch.nn.DataParallel(net2)
+print('Using', torch.cuda.device_count(), 'GPUs.')
+
+
 params = list(net1.parameters()) + list(net2.parameters())
 optimizer = optim.SGD(params, lr=args.base_lr, momentum=args.momentum, weight_decay=args.decay)
 
@@ -284,7 +295,10 @@ def checkpoint(epoch, option):
         'net1': net1,
         'net2': net2,
         'epoch': epoch,
-        'rng_state': torch.get_rng_state()
+        'rng_state': torch.get_rng_state(),
+        'cuda_rng_state':torch.cuda.get_rng_state(),
+        'np_state': np.random.get_state(), 
+        'random_state': random.getstate()
     }
     if not os.path.isdir(args.checkpoint_dir):
         os.mkdir(args.checkpoint_dir)
@@ -320,16 +334,13 @@ def train(epoch):
     S_iter2 = iter(S_loader2)
     U_iter = iter(U_loader)
     print('epoch:', epoch+1)
-    # for i, (inputs, targets) in enumerate(zip(S_loader1, S_loader2, U_loader):
     for i in tqdm(range(step)):
         inputs_S1, labels_S1 = S_iter1.next()
         inputs_S2, labels_S2 = S_iter2.next()
         inputs_U, labels_U = U_iter.next() # note that labels_U will not be used for training. 
 
-        inputs_S1 = inputs_S1.cuda()
-        labels_S1 = labels_S1.cuda()
-        inputs_S2 = inputs_S2.cuda()
-        labels_S2 = labels_S2.cuda()
+        inputs_S1, labels_S1 = inputs_S1.cuda(), labels_S1.cuda()
+        inputs_S2, labels_S2 = inputs_S2.cuda(), labels_S2.cuda()
         inputs_U = inputs_U.cuda()    
 
 
@@ -345,23 +356,17 @@ def train(epoch):
         _, predictions_U1 = torch.max(logit_U1, 1)
         _, predictions_U2 = torch.max(logit_U2, 1)
 
-        #net1 adversary object
-        adversary1 = GradientSignAttack(
-        net1, loss_fn=nn.CrossEntropyLoss(reduction="sum"), eps=args.epsilon,
-        clip_min=0.0, clip_max=1.0, targeted=False)
-
-        #net2 adversary object
-        adversary2 = GradientSignAttack(
-        net2, loss_fn=nn.CrossEntropyLoss(reduction="sum"), eps=args.epsilon,
-        clip_min=0.0, clip_max=1.0, targeted=False)
-
+        # fix batchnorm
+        net1.eval()
+        net2.eval()
         #generate adversarial examples
         perturbed_data_S1 = adversary1.perturb(inputs_S1, labels_S1)
         perturbed_data_U1 = adversary1.perturb(inputs_U, predictions_U1)
 
         perturbed_data_S2 = adversary2.perturb(inputs_S2, labels_S2)
         perturbed_data_U2 = adversary2.perturb(inputs_U, predictions_U2)
-
+        net1.train()
+        net2.train()
 
         perturbed_logit_S1 = net1(perturbed_data_S2)
         perturbed_logit_S2 = net2(perturbed_data_S1)
@@ -403,7 +408,7 @@ def train(epoch):
         
         # using tensorboard to monitor loss and acc
         writer.add_scalars('data/loss', {'loss_sup': Loss_sup.item(), 'loss_cot': Loss_cot.item(), 'loss_diff': Loss_diff.item()}, (epoch)*(step)+i)
-        writer.add_scalars('data/training_accuracy', {'net1 acc': 100. * (train_correct_S1) / (total_S1), 'net2 acc': 100. * (train_correct_S2) / (total_S2)}, (epoch)*(step)+i)
+        writer.add_scalars('data/training_accuracy', {'net1 acc': 100. * (train_correct_S1+train_correct_U1) / (total_S1+total_U1), 'net2 acc': 100. * (train_correct_S2+train_correct_U2) / (total_S2+total_U2)}, (epoch)*(step)+i)
         if (i+1)%50 == 0:
             # print statistics
             tqdm.write('net1 training acc: %.3f%% | net2 training acc: %.3f%% | total loss: %.3f | loss_sup: %.3f | loss_cot: %.3f | loss_diff: %.3f  '
